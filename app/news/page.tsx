@@ -1,14 +1,13 @@
+// app/news/page.tsx
+"use client";
+
 import NewsFeed from "@/components/news/NewsFeed";
-import { fetchLatestNews } from "@/engines/newsEngine";
-import { useAppStore } from "@/lib/appStore";
 
-export default async function NewsPage() {
-  const news = await fetchLatestNews();
-  useAppStore.getState().setLatestNews(news);
-
+export default function NewsPage() {
   return (
-    <div className="max-w-3xl mx-auto mt-6">
+    <main className="mx-auto flex max-w-5xl flex-col gap-4 p-4">
+      <h1 className="text-lg font-semibold text-slate-100">SPICE – News</h1>
       <NewsFeed />
-    </div>
+    </main>
   );
 }
