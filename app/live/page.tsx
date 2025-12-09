@@ -1,24 +1,20 @@
 // app/live/page.tsx
 "use client";
 
-import { ConnectBrokerButton } from "@/components/broker/ConnectBrokerButton";
-
-// inside your JSX, maybe near the page title:
-<div className="flex items-center justify-between">
-  <h1 className="text-lg font-semibold text-slate-100">SPICE Live</h1>
-  <ConnectBrokerButton />
-</div>
-
 import { useEffect, useState } from "react";
+
+import { ConnectBrokerButton } from "@/components/broker/ConnectBrokerButton";
 import LiveTradeInput from "@/components/live/LiveTradeInput";
+import { ExitRecommendationPanel } from "@/components/live/ExitRecommendationPanel";
+
 import { useSpiceEngine } from "@/lib/hooks/useSpiceEngine";
+import { useExitEngine, type LiveExitInput } from "@/lib/hooks/useExitEngine";
+
 import { useEngineStore } from "@/lib/store/engineStore";
 import { useSpiceStore } from "@/lib/store/spiceStore";
 import { useJournalStore } from "@/lib/store/journalStore";
-import type { JournalEntry } from "@/lib/journal/journalTypes";
 
-import { useExitEngine, type LiveExitInput } from "@/lib/hooks/useExitEngine";
-import { ExitRecommendationPanel } from "@/components/live/ExitRecommendationPanel";
+import type { JournalEntry } from "@/lib/journal/journalTypes";
 
 export default function LivePage() {
   // 🔁 start engine loop (runs every second)
@@ -44,7 +40,7 @@ export default function LivePage() {
   const [mockPriceInput, setMockPriceInput] = useState<string>("");
   const [isSimOn, setIsSimOn] = useState(false);
 
-  // 🧱 New: risk config for the current live trade
+  // 🧱 Risk config for the current live trade
   const [stopLossInput, setStopLossInput] = useState<string>("");
   const [takeProfitInput, setTakeProfitInput] = useState<string>("");
   const [maxHoldMinutesInput, setMaxHoldMinutesInput] = useState<string>("");
@@ -70,7 +66,7 @@ export default function LivePage() {
     const closedAt = new Date().toISOString();
 
     // Normalize direction for P/L + journal
-    const dirStr = String(liveTrade.direction).toLowerCase();
+    const dirStr = String((liveTrade as any).direction ?? "").toLowerCase();
 
     // Treat CALL / long as long, PUT / short as short
     const isLongDirection = dirStr === "call" || dirStr === "long";
@@ -89,22 +85,21 @@ export default function LivePage() {
         ? Number((liveTrade as any).contracts)
         : 1;
 
+    const openedAtStr =
+      typeof (liveTrade as any).openedAt === "string"
+        ? (liveTrade as any).openedAt
+        : closedAt;
+
     const entry: JournalEntry = {
       id: closedAt,
       symbol: liveTrade.symbol,
-      direction: journalDirection, // ✅ now matches JournalEntry type
+      direction: journalDirection,
       entryPrice: liveTrade.entryPrice,
       exitPrice: lastPrice,
-      contracts:
-        (liveTrade as any).contracts !== undefined
-          ? Number((liveTrade as any).contracts)
-          : 1,
-      openedAt:
-        typeof (liveTrade as any).openedAt === "string"
-          ? (liveTrade as any).openedAt
-          : closedAt,
+      contracts,
+      openedAt: openedAtStr,
       closedAt,
-      notes: liveTrade.notes ?? "",
+      notes: (liveTrade as any).notes ?? "",
       pnlPoints,
       result,
     };
@@ -148,7 +143,7 @@ export default function LivePage() {
 
   // 🧠 Build Exit Engine input from the live trade + price + risk config
   const directionStr: string | null = liveTrade
-    ? String(liveTrade.direction).toLowerCase()
+    ? String((liveTrade as any).direction ?? "").toLowerCase()
     : null;
 
   const contractsForLabel =
@@ -158,24 +153,24 @@ export default function LivePage() {
 
   const exitInput: LiveExitInput | null = liveTrade
     ? {
-      entryPrice: liveTrade.entryPrice,
-      currentPrice:
-        typeof price === "number"
-          ? price
-          : snapshot?.lastPrice ?? liveTrade.entryPrice,
-      isLong: directionStr === "call" || directionStr === "long",
-      stopLoss: parsedStopLoss,
-      target: parsedTakeProfit,
-      scaleOutLevel: undefined,
-      maxHoldMinutes: parsedMaxHoldMinutes,
-      openedAt:
-        typeof (liveTrade as any).openedAt === "string"
-          ? new Date((liveTrade as any).openedAt).getTime()
-          : typeof (liveTrade as any).openedAt === "number"
+        entryPrice: liveTrade.entryPrice,
+        currentPrice:
+          typeof price === "number"
+            ? price
+            : snapshot?.lastPrice ?? liveTrade.entryPrice,
+        isLong: directionStr === "call" || directionStr === "long",
+        stopLoss: parsedStopLoss,
+        target: parsedTakeProfit,
+        scaleOutLevel: undefined,
+        maxHoldMinutes: parsedMaxHoldMinutes,
+        openedAt:
+          typeof (liveTrade as any).openedAt === "string"
+            ? new Date((liveTrade as any).openedAt).getTime()
+            : typeof (liveTrade as any).openedAt === "number"
             ? (liveTrade as any).openedAt
             : Date.now(),
-      label: `${liveTrade.symbol} x${contractsForLabel} (${liveTrade.direction})`,
-    }
+        label: `${liveTrade.symbol} x${contractsForLabel} (${(liveTrade as any).direction ?? "?"})`,
+      }
     : null;
 
   // 🧠 Exit Engine recommendation (updates every second)
@@ -183,7 +178,11 @@ export default function LivePage() {
 
   return (
     <main className="mx-auto flex max-w-5xl flex-col gap-4 p-4">
-      <h1 className="text-lg font-semibold text-slate-100">SPICE Live</h1>
+      {/* Header with broker connect */}
+      <div className="flex items-center justify-between">
+        <h1 className="text-lg font-semibold text-slate-100">SPICE Live</h1>
+        <ConnectBrokerButton />
+      </div>
 
       <section className="grid gap-4 md:grid-cols-2">
         {/* Left: Live trade input */}
@@ -224,10 +223,11 @@ export default function LivePage() {
               <button
                 type="button"
                 onClick={() => setIsSimOn((prev) => !prev)}
-                className={`rounded-md px-3 py-1 text-[11px] font-medium transition ${isSimOn
-                  ? "border border-rose-500 text-rose-300 hover:bg-rose-500/10"
-                  : "border border-emerald-500 text-emerald-300 hover:bg-emerald-500/10"
-                  }`}
+                className={`rounded-md px-3 py-1 text-[11px] font-medium transition ${
+                  isSimOn
+                    ? "border border-rose-500 text-rose-300 hover:bg-rose-500/10"
+                    : "border border-emerald-500 text-emerald-300 hover:bg-emerald-500/10"
+                }`}
               >
                 {isSimOn ? "Stop Auto-Price" : "Start Auto-Price"}
               </button>
@@ -332,7 +332,9 @@ export default function LivePage() {
             recommendation={exitRecommendation}
             label={
               liveTrade
-                ? `${liveTrade.symbol} x${liveTrade.contracts} (${liveTrade.direction})`
+                ? `${liveTrade.symbol} x${contractsForLabel} (${
+                    (liveTrade as any).direction ?? "?"
+                  })`
                 : undefined
             }
           />
