@@ -47,8 +47,8 @@ export default function SpxPage() {
 
           <span
             className={`rounded-full px-2 py-0.5 text-xs font-medium ${state.price.change >= 0
-                ? "bg-emerald-500 text-black"
-                : "bg-red-500 text-black"
+              ? "bg-emerald-500 text-black"
+              : "bg-red-500 text-black"
               }`}
           >
             {state.price.change >= 0 ? "+" : ""}
@@ -69,13 +69,17 @@ export default function SpxPage() {
       <section className="grid gap-4 md:grid-cols-2">
         {state.timeframes.map((tf, idx) => (
           <article
-            key={tf.label ?? idx} // unique key ✅
+            key={tf.timeframe ?? idx} // unique key based on timeframe
             className="rounded-xl border border-slate-700 p-4 space-y-2"
           >
             <div className="flex items-center justify-between">
               <h2 className="text-sm font-semibold">
-                {tf.label}
-                {tf.bias ? ` – ${tf.bias}` : null}
+                {tf.timeframe}
+                {tf.bias ? (
+                  <span className="ml-2 text-[11px] text-amber-300">
+                    {tf.bias}
+                  </span>
+                ) : null}
               </h2>
 
               {tf.tag && (
@@ -90,7 +94,7 @@ export default function SpxPage() {
 
             <ul className="space-y-1 text-xs text-slate-300">
               {(tf.notes ?? []).map((note: string, i: number) => (
-                <li key={i}>{note}</li>
+                <li key={i}>• {note}</li>
               ))}
             </ul>
           </article>
