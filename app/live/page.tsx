@@ -99,7 +99,10 @@ export default function LivePage() {
         (liveTrade as any).contracts !== undefined
           ? Number((liveTrade as any).contracts)
           : 1,
-      openedAt: liveTrade.openedAt,
+      openedAt:
+        typeof (liveTrade as any).openedAt === "string"
+          ? (liveTrade as any).openedAt
+          : closedAt,
       closedAt,
       notes: liveTrade.notes ?? "",
       pnlPoints,
