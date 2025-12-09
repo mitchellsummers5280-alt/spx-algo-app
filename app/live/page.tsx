@@ -69,14 +69,17 @@ export default function LivePage() {
 
     const closedAt = new Date().toISOString();
 
-    // Treat CALL / long as long, everything else as short
-    const dir = String(liveTrade.direction);
-    const isLongDirection = dir === "call" || dir === "long";
+    // Normalize direction for P/L + journal
+    const dirStr = String(liveTrade.direction).toLowerCase();
+
+    // Treat CALL / long as long, PUT / short as short
+    const isLongDirection = dirStr === "call" || dirStr === "long";
+    const journalDirection: "long" | "short" =
+      dirStr === "put" || dirStr === "short" ? "short" : "long";
 
     const pnlPoints = isLongDirection
       ? lastPrice - liveTrade.entryPrice
       : liveTrade.entryPrice - lastPrice;
-
 
     const result: JournalEntry["result"] =
       pnlPoints > 0 ? "win" : pnlPoints < 0 ? "loss" : "breakeven";
@@ -84,7 +87,7 @@ export default function LivePage() {
     const entry: JournalEntry = {
       id: closedAt,
       symbol: liveTrade.symbol,
-      direction: liveTrade.direction,
+      direction: journalDirection, // ✅ now matches JournalEntry type
       entryPrice: liveTrade.entryPrice,
       exitPrice: lastPrice,
       contracts: liveTrade.contracts,
@@ -132,11 +135,13 @@ export default function LivePage() {
   const parsedMaxHoldMinutes =
     Number.isFinite(maxHoldNum) && maxHoldNum > 0 ? maxHoldNum : undefined;
 
-  // 🎯 Build Exit Engine input from the live trade + price + risk config
-  const directionStr = liveTrade ? String(liveTrade.direction) : null;
+  // 🧠 Build Exit Engine input from the live trade + price + risk config
+  const directionStr: string | null = liveTrade
+    ? String(liveTrade.direction).toLowerCase()
+    : null;
 
-const exitInput: LiveExitInput | null = liveTrade
-  ? {
+  const exitInput: LiveExitInput | null = liveTrade
+    ? {
       entryPrice: liveTrade.entryPrice,
       currentPrice:
         derivedPremium ??
@@ -154,7 +159,7 @@ const exitInput: LiveExitInput | null = liveTrade
           : (liveTrade.openedAt as number),
       label: `${liveTrade.symbol} x${liveTrade.contracts} (${liveTrade.direction})`,
     }
-  : null;
+    : null;
 
   // 🧠 Exit Engine recommendation (updates every second)
   const exitRecommendation = useExitEngine(exitInput);
