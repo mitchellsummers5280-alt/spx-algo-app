@@ -153,24 +153,24 @@ export default function LivePage() {
 
   const exitInput: LiveExitInput | null = liveTrade
     ? {
-        entryPrice: liveTrade.entryPrice,
-        currentPrice:
-          typeof price === "number"
-            ? price
-            : snapshot?.lastPrice ?? liveTrade.entryPrice,
-        isLong: directionStr === "call" || directionStr === "long",
-        stopLoss: parsedStopLoss,
-        target: parsedTakeProfit,
-        scaleOutLevel: undefined,
-        maxHoldMinutes: parsedMaxHoldMinutes,
-        openedAt:
-          typeof (liveTrade as any).openedAt === "string"
-            ? new Date((liveTrade as any).openedAt).getTime()
-            : typeof (liveTrade as any).openedAt === "number"
+      entryPrice: liveTrade.entryPrice,
+      currentPrice:
+        typeof price === "number"
+          ? price
+          : snapshot?.lastPrice ?? liveTrade.entryPrice,
+      isLong: directionStr === "call" || directionStr === "long",
+      stopLoss: parsedStopLoss,
+      target: parsedTakeProfit,
+      scaleOutLevel: undefined,
+      maxHoldMinutes: parsedMaxHoldMinutes,
+      openedAt:
+        typeof (liveTrade as any).openedAt === "string"
+          ? new Date((liveTrade as any).openedAt).getTime()
+          : typeof (liveTrade as any).openedAt === "number"
             ? (liveTrade as any).openedAt
             : Date.now(),
-        label: `${liveTrade.symbol} x${contractsForLabel} (${(liveTrade as any).direction ?? "?"})`,
-      }
+      label: `${liveTrade.symbol} x${contractsForLabel} (${(liveTrade as any).direction ?? "?"})`,
+    }
     : null;
 
   // 🧠 Exit Engine recommendation (updates every second)
@@ -223,11 +223,10 @@ export default function LivePage() {
               <button
                 type="button"
                 onClick={() => setIsSimOn((prev) => !prev)}
-                className={`rounded-md px-3 py-1 text-[11px] font-medium transition ${
-                  isSimOn
+                className={`rounded-md px-3 py-1 text-[11px] font-medium transition ${isSimOn
                     ? "border border-rose-500 text-rose-300 hover:bg-rose-500/10"
                     : "border border-emerald-500 text-emerald-300 hover:bg-emerald-500/10"
-                }`}
+                  }`}
               >
                 {isSimOn ? "Stop Auto-Price" : "Start Auto-Price"}
               </button>
@@ -332,15 +331,14 @@ export default function LivePage() {
             recommendation={exitRecommendation}
             label={
               liveTrade
-                ? `${liveTrade.symbol} x${contractsForLabel} (${
-                    (liveTrade as any).direction ?? "?"
-                  })`
+                ? `${liveTrade.symbol} x${contractsForLabel} (${(liveTrade as any).direction ?? "?"
+                })`
                 : undefined
             }
           />
 
           {/* Raw exitDecision from core engine (keep for debug / transparency) */}
-          {exitDecision && exitDecision.shouldExit && (
+          {exitDecision && exitDecision.action === "exit" && (
             <div className="rounded-lg border border-amber-500 bg-amber-500/10 p-3 text-xs text-amber-100">
               <div className="flex justify-between">
                 <span className="font-semibold">Engine Exit Suggestion</span>
