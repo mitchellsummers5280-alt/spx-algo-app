@@ -84,6 +84,11 @@ export default function LivePage() {
     const result: JournalEntry["result"] =
       pnlPoints > 0 ? "win" : pnlPoints < 0 ? "loss" : "breakeven";
 
+    const contracts =
+      (liveTrade as any).contracts !== undefined
+        ? Number((liveTrade as any).contracts)
+        : 1;
+
     const entry: JournalEntry = {
       id: closedAt,
       symbol: liveTrade.symbol,
@@ -140,6 +145,11 @@ export default function LivePage() {
     ? String(liveTrade.direction).toLowerCase()
     : null;
 
+  const contractsForLabel =
+    liveTrade && (liveTrade as any).contracts !== undefined
+      ? Number((liveTrade as any).contracts)
+      : 1;
+
   const exitInput: LiveExitInput | null = liveTrade
     ? {
       entryPrice: liveTrade.entryPrice,
@@ -157,7 +167,7 @@ export default function LivePage() {
         typeof liveTrade.openedAt === "string"
           ? new Date(liveTrade.openedAt).getTime()
           : (liveTrade.openedAt as number),
-      label: `${liveTrade.symbol} x${liveTrade.contracts} (${liveTrade.direction})`,
+      label: `${liveTrade.symbol} x${contractsForLabel} (${liveTrade.direction})`,
     }
     : null;
 
