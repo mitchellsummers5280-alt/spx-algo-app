@@ -338,7 +338,7 @@ export default function LivePage() {
           />
 
           {/* Raw exitDecision from core engine (keep for debug / transparency) */}
-          {exitDecision && exitDecision.action === "exit" && (
+          {exitDecision && (
             <div className="rounded-lg border border-amber-500 bg-amber-500/10 p-3 text-xs text-amber-100">
               <div className="flex justify-between">
                 <span className="font-semibold">Engine Exit Suggestion</span>
