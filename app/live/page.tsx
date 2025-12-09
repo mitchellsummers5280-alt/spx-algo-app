@@ -69,8 +69,9 @@ export default function LivePage() {
 
     const closedAt = new Date().toISOString();
 
-    // Treat CALL as long, PUT as short
-    const isLongDirection = liveTrade.direction === "call";
+    // Treat CALL / long as long, everything else as short
+    const dir = String(liveTrade.direction);
+    const isLongDirection = dir === "call" || dir === "long";
 
     const pnlPoints = isLongDirection
       ? lastPrice - liveTrade.entryPrice
@@ -132,17 +133,20 @@ export default function LivePage() {
     Number.isFinite(maxHoldNum) && maxHoldNum > 0 ? maxHoldNum : undefined;
 
   // 🎯 Build Exit Engine input from the live trade + price + risk config
-  const exitInput: LiveExitInput | null = liveTrade
-    ? {
+  const directionStr = liveTrade ? String(liveTrade.direction) : null;
+
+const exitInput: LiveExitInput | null = liveTrade
+  ? {
       entryPrice: liveTrade.entryPrice,
       currentPrice:
-        typeof price === "number"
+        derivedPremium ??
+        (typeof price === "number"
           ? price
-          : snapshot?.lastPrice ?? liveTrade.entryPrice,
-      isLong: liveTrade.direction === "call",
+          : snapshot?.lastPrice ?? liveTrade.entryPrice),
+      isLong: directionStr === "call" || directionStr === "long",
       stopLoss: parsedStopLoss,
       target: parsedTakeProfit,
-      scaleOutLevel: undefined, // we can expose this later if you want
+      scaleOutLevel: undefined,
       maxHoldMinutes: parsedMaxHoldMinutes,
       openedAt:
         typeof liveTrade.openedAt === "string"
@@ -150,7 +154,7 @@ export default function LivePage() {
           : (liveTrade.openedAt as number),
       label: `${liveTrade.symbol} x${liveTrade.contracts} (${liveTrade.direction})`,
     }
-    : null;
+  : null;
 
   // 🧠 Exit Engine recommendation (updates every second)
   const exitRecommendation = useExitEngine(exitInput);
@@ -199,8 +203,8 @@ export default function LivePage() {
                 type="button"
                 onClick={() => setIsSimOn((prev) => !prev)}
                 className={`rounded-md px-3 py-1 text-[11px] font-medium transition ${isSimOn
-                    ? "border border-rose-500 text-rose-300 hover:bg-rose-500/10"
-                    : "border border-emerald-500 text-emerald-300 hover:bg-emerald-500/10"
+                  ? "border border-rose-500 text-rose-300 hover:bg-rose-500/10"
+                  : "border border-emerald-500 text-emerald-300 hover:bg-emerald-500/10"
                   }`}
               >
                 {isSimOn ? "Stop Auto-Price" : "Start Auto-Price"}
