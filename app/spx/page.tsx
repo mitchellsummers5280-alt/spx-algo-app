@@ -46,11 +46,10 @@ export default function SpxPage() {
           </span>
 
           <span
-            className={`rounded-full px-2 py-0.5 text-xs font-medium ${
-              state.price.change >= 0
+            className={`rounded-full px-2 py-0.5 text-xs font-medium ${state.price.change >= 0
                 ? "bg-emerald-500 text-black"
                 : "bg-red-500 text-black"
-            }`}
+              }`}
           >
             {state.price.change >= 0 ? "+" : ""}
             {state.price.change.toFixed(2)} (
@@ -58,7 +57,12 @@ export default function SpxPage() {
           </span>
         </div>
 
-        <p className="text-sm text-slate-300 mt-3">{state.overview}</p>
+        {/* High-level narrative (temporarily static until we wire a real overview field) */}
+        <p className="text-sm text-slate-300 mt-3">
+          SPICE is watching SPX order flow, trend, and liquidity zones. This box will
+          eventually show a live narrative summary once we add an `overview` field to
+          the engine state.
+        </p>
       </section>
 
       {/* Timeframe cards */}
@@ -76,9 +80,8 @@ export default function SpxPage() {
 
               {tf.tag && (
                 <span
-                  className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${
-                    tf.tagColor ?? "bg-slate-700"
-                  }`}
+                  className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${tf.tagColor ?? "bg-slate-700"
+                    }`}
                 >
                   {tf.tag}
                 </span>
