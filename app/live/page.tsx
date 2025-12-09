@@ -160,10 +160,9 @@ export default function LivePage() {
     ? {
       entryPrice: liveTrade.entryPrice,
       currentPrice:
-        derivedPremium ??
-        (typeof price === "number"
+        typeof price === "number"
           ? price
-          : snapshot?.lastPrice ?? liveTrade.entryPrice),
+          : snapshot?.lastPrice ?? liveTrade.entryPrice,
       isLong: directionStr === "call" || directionStr === "long",
       stopLoss: parsedStopLoss,
       target: parsedTakeProfit,
