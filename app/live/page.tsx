@@ -169,9 +169,11 @@ export default function LivePage() {
       scaleOutLevel: undefined,
       maxHoldMinutes: parsedMaxHoldMinutes,
       openedAt:
-        typeof liveTrade.openedAt === "string"
-          ? new Date(liveTrade.openedAt).getTime()
-          : (liveTrade.openedAt as number),
+        typeof (liveTrade as any).openedAt === "string"
+          ? new Date((liveTrade as any).openedAt).getTime()
+          : typeof (liveTrade as any).openedAt === "number"
+            ? (liveTrade as any).openedAt
+            : Date.now(),
       label: `${liveTrade.symbol} x${contractsForLabel} (${liveTrade.direction})`,
     }
     : null;
