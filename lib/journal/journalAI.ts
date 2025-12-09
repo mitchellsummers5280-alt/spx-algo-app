@@ -1,31 +1,45 @@
-// ----------------------------------------------------
-// Trading Journal — AI Feedback
-// ----------------------------------------------------
+// lib/journal/journalAI.ts
 
-import { JournalTrade } from "./journalTypes";
+import type { JournalEntry } from "./journalTypes";
 
-export function generateJournalFeedback(trade: JournalTrade): string {
+export function generateJournalFeedback(trade: JournalEntry): string {
   const msgs: string[] = [];
 
-  // 1 — Entry logic feedback  
-  if (trade.thesis.toLowerCase().includes("fomo")) {
-    msgs.push("It looks like FOMO influenced this trade. Review your rule on waiting for confirmation.");
+  // Basic result framing
+  if (trade.result === "win") {
+    msgs.push(
+      "Win – note what you saw before entry (levels, narrative, flow) so you can repeat it."
+    );
+  } else if (trade.result === "loss") {
+    msgs.push(
+      "Loss – focus on whether you followed your plan or broke any rules."
+    );
+  } else {
+    msgs.push(
+      "Breakeven – think about whether scratching early made sense or if you cut it too soon."
+    );
   }
 
-  if (trade.thesis.toLowerCase().includes("breakout")) {
-    msgs.push("Breakouts require strong volume — consider checking liquidity before entering.");
+  // Simple PnL context
+  if (trade.pnlPoints > 0) {
+    msgs.push(
+      `Rough P&L: +${trade.pnlPoints.toFixed(
+        2
+      )} points per contract. Was the size appropriate for this setup?`
+    );
+  } else if (trade.pnlPoints < 0) {
+    msgs.push(
+      `Rough P&L: -${Math.abs(trade.pnlPoints).toFixed(
+        2
+      )} points per contract. Did you respect your stop?`
+    );
   }
 
-  // 2 — Outcome feedback  
-  if (trade.outcome === "win") {
-    msgs.push("Nice win — note exactly what confluence gave the best signal.");
-  } else if (trade.outcome === "loss") {
-    msgs.push("Losses happen — journal what invalidated your thesis to tighten future entries.");
-  }
-
-  // 3 — Risk management  
-  if (trade.positionSize > 5) {
-    msgs.push("Position size was large — consider defining max risk per trade.");
+  // Nudge to actually write something
+  if (!trade.notes || trade.notes.trim().length === 0) {
+    msgs.push(
+      "Add a short note about why you took this trade and one thing you'd improve next time."
+    );
   }
 
   return msgs.join(" ");

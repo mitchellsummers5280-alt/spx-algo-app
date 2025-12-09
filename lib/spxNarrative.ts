@@ -15,6 +15,7 @@ export type TimeframeSummary = {
   playbook: string;
   tag?: string;
   tagColor?: string;
+  notes?: string[];
 };
 
 export type MarketOverview = {
@@ -30,6 +31,10 @@ export type ExecutionView = {
   below: string;
   signal: string;
   action: string;
+  liquidity?: {
+    above: string;
+    below: string;
+  };
 };
 
 export type ModeView = {
@@ -136,14 +141,21 @@ export const mockSpxAlgoState: SpxAlgoState = {
   executionView: {
     currentState:
       "Price is above the 200 EMA and chopping around the 20 EMA after a strong earlier move.",
+
+    // top-level fields required by ExecutionView
+    above: "Local 1m highs that have not yet been fully cleared.",
+    below:
+      "Equal lows near 6,860 with confluence at the 200 EMA and small imbalances.",
+
+    // optional nested detail
     liquidity: {
       above: "Local 1m highs that have not yet been fully cleared.",
       below:
         "Equal lows near 6,860 with confluence at the 200 EMA and small imbalances.",
     },
-    signal: "No confirmed entry yet – liquidity is still building.",
-    action:
-      "Wait for a sweep of either the highs or lows, then look for a 1m CHoCH and reclaim of the 20 EMA before entering. Avoid random scalps in the middle of the range.",
+
+    signal: "…", // keep whatever you already had here
+    action: "…", // keep whatever you already had here
   },
 
   modes: {

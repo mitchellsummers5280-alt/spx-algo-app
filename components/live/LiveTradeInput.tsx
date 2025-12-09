@@ -32,17 +32,17 @@ export default function LiveTradeInput() {
     const tradeDirection: "long" | "short" =
       direction === "CALL" ? "long" : "short";
 
+    const nowTs = Date.now();
+
     const trade: LiveTrade = {
-      id: now,
+      id: String(nowTs),
       symbol: symbol.trim() || "SPX",
-      direction: tradeDirection,
-      productType: "options",
-      timeframe: "1m",
-      session: "new_york",
+      direction,          // "CALL" | "PUT" (matches LiveTradeDirection)
       entryPrice: priceNum,
-      contracts: sizeNum,
-      openedAt: now,
+      size: sizeNum,
+      entryTime: nowTs,
       notes,
+      isOpen: true,
     };
 
     startLiveTrade(trade);

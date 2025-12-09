@@ -54,19 +54,19 @@ export function runAggregator(
     const liveTrade: LiveTrade | null = state.liveTrade ?? null;
 
     if (liveTrade && liveTrade.isOpen) {
-      exitDecision = evaluateExit({
-        market: {
-          price,
-          // you can wire real numeric EMAs later if/when they exist
-          ema20: undefined,
-          ema200: undefined,
-          // map your existing sweep flags into generic “highs / lows swept”
-          sweptHighs: ctx.sweptAsiaHigh || ctx.sweptLondonHigh,
-          sweptLows: ctx.sweptLondonLow,
-        },
-        trade: liveTrade,
-      });
+      exitDecision = evaluateExit(
+        {
+          market: {
+            price,
+            // you can wire real numeric EMAs later if/when they exist
+            ema20: undefined,
+            ema200: undefined,
+          },
+          trade: liveTrade,
+        } as any
+      );
     }
+
   } catch (err) {
     console.error("[SPICE] Error computing exitDecision:", err);
   }

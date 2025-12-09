@@ -2,7 +2,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { createChart, ISeriesApi } from "lightweight-charts";
+import { createChart } from "lightweight-charts";
 
 type SpiceChartProps = {
   timeframe?: string; // "1m", "3m", etc.
@@ -19,8 +19,7 @@ export function SpiceChart({ timeframe = "1m" }: SpiceChartProps) {
       height: 400,
     });
 
-    const candleSeries: ISeriesApi<"Candlestick"> =
-      chart.addCandlestickSeries();
+    const candleSeries = (chart as any).addCandlestickSeries();
 
     async function loadData() {
       const res = await fetch(`/api/spx?tf=${timeframe}&bars=800`);

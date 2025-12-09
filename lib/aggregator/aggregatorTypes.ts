@@ -31,7 +31,7 @@ export type EngineSnapshot = {
   debug: {
     source: EngineSource;
     updatedAt: string;
-    notes: string[];
+    notes?: string[];
   };
 };
 

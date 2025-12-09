@@ -43,7 +43,7 @@ type SpiceStoreState = {
 export const useSpiceStore = create<SpiceStoreState>((set) => ({
   // defaults
   price: null,
-  session: "new_york",
+  session: "new-york",
   twentyEmaAboveTwoHundred: false,
   atAllTimeHigh: false,
   sweptAsiaHigh: false,

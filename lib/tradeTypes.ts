@@ -14,3 +14,6 @@ export type LiveTrade = {
   notes?: string;         // optional user notes
   isOpen: boolean;        // true until closed
 };
+
+export type SessionTag = "asia" | "london" | "new-york" | "off";
+
