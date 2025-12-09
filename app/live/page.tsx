@@ -224,8 +224,8 @@ export default function LivePage() {
                 type="button"
                 onClick={() => setIsSimOn((prev) => !prev)}
                 className={`rounded-md px-3 py-1 text-[11px] font-medium transition ${isSimOn
-                    ? "border border-rose-500 text-rose-300 hover:bg-rose-500/10"
-                    : "border border-emerald-500 text-emerald-300 hover:bg-emerald-500/10"
+                  ? "border border-rose-500 text-rose-300 hover:bg-rose-500/10"
+                  : "border border-emerald-500 text-emerald-300 hover:bg-emerald-500/10"
                   }`}
               >
                 {isSimOn ? "Stop Auto-Price" : "Start Auto-Price"}
@@ -337,27 +337,7 @@ export default function LivePage() {
             }
           />
 
-          {/* Raw exitDecision from core engine (keep for debug / transparency) */}
-          {exitDecision && (
-            <div className="rounded-lg border border-amber-500 bg-amber-500/10 p-3 text-xs text-amber-100">
-              <div className="flex justify-between">
-                <span className="font-semibold">Engine Exit Suggestion</span>
-                {exitDecision.exitType && (
-                  <span className="text-[11px] uppercase">
-                    {exitDecision.exitType.replace("_", " ")}
-                  </span>
-                )}
-              </div>
-              <p className="mt-1">
-                {exitDecision.reason ?? "Exit conditions met."}
-              </p>
-              {typeof exitDecision.targetPrice === "number" && (
-                <p className="mt-1 text-[11px] text-amber-300">
-                  Target price: {exitDecision.targetPrice.toFixed(2)}
-                </p>
-              )}
-            </div>
-          )}
+          {/* Raw core-engine exitDecision panel temporarily removed for clean build */}
 
           {/* Close + log button (only when a trade is open) */}
           {hasOpenTrade && (
