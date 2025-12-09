@@ -95,7 +95,10 @@ export default function LivePage() {
       direction: journalDirection, // ✅ now matches JournalEntry type
       entryPrice: liveTrade.entryPrice,
       exitPrice: lastPrice,
-      contracts: liveTrade.contracts,
+      contracts:
+        (liveTrade as any).contracts !== undefined
+          ? Number((liveTrade as any).contracts)
+          : 1,
       openedAt: liveTrade.openedAt,
       closedAt,
       notes: liveTrade.notes ?? "",
