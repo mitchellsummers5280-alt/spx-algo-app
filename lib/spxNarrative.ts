@@ -13,6 +13,8 @@ export type TimeframeSummary = {
   trend: string;
   liquidity: string;
   playbook: string;
+  tag?: string;
+  tagColor?: string;
 };
 
 export type MarketOverview = {
