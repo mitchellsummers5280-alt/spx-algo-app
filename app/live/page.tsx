@@ -3,7 +3,7 @@
 
 import { useEffect, useState } from "react";
 
-import { ConnectBrokerButton } from "@/components/broker/ConnectBrokerButton";
+import { ConnectBrokerButton } from "@/components/snaptrades/ConnectBrokerButton";
 import LiveTradeInput from "@/components/live/LiveTradeInput";
 import { ExitRecommendationPanel } from "@/components/live/ExitRecommendationPanel";
 

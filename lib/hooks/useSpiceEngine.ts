@@ -3,9 +3,11 @@
 
 import { useEffect } from "react";
 import { runAggregator } from "lib/aggregator/spiceAggregator";
+import type { AggregatorContext } from "lib/aggregator/aggregatorTypes";
 import { useEngineStore } from "lib/store/engineStore";
 import { useSpiceStore } from "lib/store/spiceStore";
-import type { AggregatorContext } from "lib/aggregator/aggregatorTypes";
+import { computeMultiTimeframeState } from "lib/engines/multiTimeFrame/multiTimeframeEngine";
+import { usePolygonLive } from "./usePolygonLive";
 
 /**
  * Build the AggregatorContext directly from the Zustand store.
@@ -17,31 +19,52 @@ function buildContextFromStore(): AggregatorContext {
     price: s.price,
     hasOpenTrade: s.hasOpenTrade,
     session: s.session,
+
+    // MTE-related fields
+    primaryTimeframe: s.primaryTimeframe,
+    twentyEma: s.twentyEma,
+    twoHundredEma: s.twoHundredEma,
     twentyEmaAboveTwoHundred: s.twentyEmaAboveTwoHundred,
     atAllTimeHigh: s.atAllTimeHigh,
     sweptAsiaHigh: s.sweptAsiaHigh,
     sweptAsiaLow: s.sweptAsiaLow,
     sweptLondonHigh: s.sweptLondonHigh,
     sweptLondonLow: s.sweptLondonLow,
-    newsImpactOn: s.newsImpactOn,
   };
 }
 
 export function useSpiceEngine() {
-  const updateSnapshot = useEngineStore((s) => s.updateSnapshot);
+  usePolygonLive();
+  const setEngineSnapshot = useEngineStore((s) => s.setSnapshot);
 
   useEffect(() => {
-    const run = () => {
-      const ctx = buildContextFromStore();
-      const snapshot = runAggregator(ctx, "timer");
-      updateSnapshot(snapshot);
-    };
+    const intervalId = setInterval(() => {
+      // 1) Compute multi-timeframe state from candles
+      const mteState = computeMultiTimeframeState();
 
-    // run once immediately
-    run();
+      // 2) Push it into the main SPICE store so UI + aggregator can see it
+      useSpiceStore.setState({
+        primaryTimeframe: mteState.primaryTimeframe,
+        twentyEma: mteState.twentyEma,
+        twoHundredEma: mteState.twoHundredEma,
+        twentyEmaAboveTwoHundred: mteState.twentyEmaAboveTwoHundred,
+        atAllTimeHigh: mteState.atAllTimeHigh,
+        sweptAsiaHigh: mteState.sweptAsiaHigh,
+        sweptAsiaLow: mteState.sweptAsiaLow,
+        sweptLondonHigh: mteState.sweptLondonHigh,
+        sweptLondonLow: mteState.sweptLondonLow,
+      });
 
-    // then every 1 second
-    const id = window.setInterval(run, 1000);
-    return () => window.clearInterval(id);
-  }, [updateSnapshot]);
+      // 3) Rebuild context from the updated store
+      const ctx: AggregatorContext = buildContextFromStore();
+
+      // 4) Run the aggregator (bias, entries, exits, notes, etc.)
+      const snapshot = runAggregator(ctx);
+
+      // 5) Save the latest engine snapshot (for engine debug UI later)
+      setEngineSnapshot(snapshot);
+    }, 1000);
+
+    return () => clearInterval(intervalId);
+  }, [setEngineSnapshot]);
 }

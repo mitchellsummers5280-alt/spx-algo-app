@@ -2,7 +2,7 @@
 import { create } from "zustand";
 import type { LiveTrade, SessionTag } from "@/lib/tradeTypes";
 
-type SpiceStoreState = {
+export type SpiceStoreState = {
   // core market context
   price: number | null;
   session: SessionTag;
@@ -13,6 +13,9 @@ type SpiceStoreState = {
   sweptLondonHigh: boolean;
   sweptLondonLow: boolean;
   newsImpactOn: boolean;
+
+  // NEW — polygon candles
+  candles: any[];
 
   // live trade
   liveTrade: LiveTrade | null;
@@ -34,6 +37,8 @@ type SpiceStoreState = {
       >
     >
   ) => void;
+
+  setCandles: (candles: any[]) => void;
   setNewsImpactOn: (on: boolean) => void;
 
   startLiveTrade: (trade: LiveTrade) => void;
@@ -43,7 +48,7 @@ type SpiceStoreState = {
 export const useSpiceStore = create<SpiceStoreState>((set) => ({
   // defaults
   price: null,
-  session: "new_york",
+  session: "new-york",
   twentyEmaAboveTwoHundred: false,
   atAllTimeHigh: false,
   sweptAsiaHigh: false,
@@ -52,23 +57,21 @@ export const useSpiceStore = create<SpiceStoreState>((set) => ({
   sweptLondonLow: false,
   newsImpactOn: false,
 
+  // NEW — polygon candles
+  candles: [],
+
+  // live trade
   liveTrade: null,
   hasOpenTrade: false,
 
+  // setters
   setPrice: (price) => set({ price }),
   setSession: (session) => set({ session }),
-  setMarketContext: (patch) => set((state) => ({ ...state, ...patch })),
+  setMarketContext: (patch) => set(patch),
+
+  setCandles: (candles) => set({ candles }),
   setNewsImpactOn: (on) => set({ newsImpactOn: on }),
 
-  startLiveTrade: (trade) =>
-    set({
-      liveTrade: trade,
-      hasOpenTrade: true,
-    }),
-
-  closeTrade: () =>
-    set({
-      liveTrade: null,
-      hasOpenTrade: false,
-    }),
+  startLiveTrade: (trade) => set({ liveTrade: trade, hasOpenTrade: true }),
+  closeTrade: () => set({ liveTrade: null, hasOpenTrade: false }),
 }));

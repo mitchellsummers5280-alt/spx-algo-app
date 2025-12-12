@@ -1,64 +1,62 @@
-// app/api/spx/route.ts
-
 import { NextResponse } from "next/server";
-import { fetchSpxAggregates } from "@/lib/marketData/polygon";
-import { generateMockSpxCandles } from "@/lib/marketData/mockSpx";
-import { Timeframe } from "@/lib/marketData/types";
 
-// Simple helper so we can parse query params
-function getSearchParam(url: string, key: string): string | null {
-  return new URL(url).searchParams.get(key);
-}
+const TICKER = "I:SPX"; 
+// ⬆️ IMPORTANT:
+// Change this to match whatever ticker you are using
+// in app/api/polygon/candles/route.ts (could be "SPX", "I:SPX", "SPY", etc.)
 
-export async function GET(req: Request) {
-  const { url } = req;
-  const tfParam = (getSearchParam(url, "tf") ?? "1m") as Timeframe;
-  const barsParam = parseInt(getSearchParam(url, "bars") ?? "500", 10);
+export async function GET() {
+  const apiKey = process.env.POLYGON_API_KEY;
 
-  // For quick dev, we just pull ~N bars over the last few days
-  // in a way that's "good enough" for testing.
-  const now = new Date();
-  const from = new Date(now);
-  from.setDate(now.getDate() - 5); // last 5 days
+  if (!apiKey) {
+    return NextResponse.json(
+      { error: "Missing POLYGON_API_KEY env var" },
+      { status: 500 }
+    );
+  }
 
   try {
-    const havePolygonKey =
-      !!process.env.POLYGON_API_KEY &&
-      process.env.POLYGON_API_KEY !== "YOUR_POLYGON_KEY_GOES_HERE";
+    // Use 1-minute aggregates and grab the most recent candle
+    const to = new Date().toISOString();
+    const from = new Date(Date.now() - 60 * 60 * 1000).toISOString(); // 1 hour back just to be safe
 
-    if (!havePolygonKey) {
-      // Mock mode until you sign up for Polygon
-      const mock = generateMockSpxCandles({
-        timeframe: tfParam,
-        bars: barsParam,
-      });
+    const url = `https://api.polygon.io/v2/aggs/ticker/${encodeURIComponent(
+      TICKER
+    )}/range/1/minute/${from}/${to}?limit=1&sort=desc&apiKey=${apiKey}`;
+
+    const res = await fetch(url, { cache: "no-store" });
+    if (!res.ok) {
       return NextResponse.json(
-        { mode: "mock", timeframe: tfParam, candles: mock },
-        { status: 200 }
+        { error: `Polygon HTTP ${res.status}` },
+        { status: 502 }
       );
     }
 
-    // Real Polygon data mode
-    const candles = await fetchSpxAggregates({
-      timeframe: tfParam,
-      from: from.toISOString().slice(0, 10),
-      to: now.toISOString().slice(0, 10),
-    });
+    const data = await res.json();
 
-    // If Polygon returns lots of bars, trim to requested count from the end
-    const trimmed =
-      candles.length > barsParam
-        ? candles.slice(candles.length - barsParam)
-        : candles;
+    const results = data?.results;
+    if (!Array.isArray(results) || results.length === 0) {
+      return NextResponse.json(
+        { error: "No results in Polygon aggregate response", raw: data },
+        { status: 502 }
+      );
+    }
 
-    return NextResponse.json(
-      { mode: "polygon", timeframe: tfParam, candles: trimmed },
-      { status: 200 }
-    );
+    const lastCandle = results[0];
+    const price = lastCandle?.c; // candle close
+
+    if (typeof price !== "number") {
+      return NextResponse.json(
+        { error: "No numeric close price in Polygon response", raw: data },
+        { status: 502 }
+      );
+    }
+
+    return NextResponse.json({ price });
   } catch (err) {
-    console.error("SPX API route error:", err);
+    console.error("Polygon price (aggs) error:", err);
     return NextResponse.json(
-      { error: "Failed to fetch SPX data" },
+      { error: "Failed to fetch from Polygon aggregates" },
       { status: 500 }
     );
   }

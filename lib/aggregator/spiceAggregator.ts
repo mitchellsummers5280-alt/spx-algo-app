@@ -3,6 +3,13 @@
 import { useSpiceStore } from "../store/spiceStore";
 import { evaluateExit, type ExitDecision } from "../engines/exitEngine";
 import type { LiveTrade } from "../tradeTypes";
+import { computeMultiTimeframeState } from "lib/engines/multiTimeframeEngine";
+
+import {
+  evaluateEntry,
+  type EntryEngineInput,
+  type EntryDecision,
+} from "../engines/entryEngine";
 
 import {
   AggregatorContext,
@@ -18,8 +25,7 @@ function nowIso(): string {
 }
 
 /**
- * Very simple “rule engine” to start.
- * We’ll refine these rules later as we formalize your playbook.
+ * Main SPICE aggregator
  */
 export function runAggregator(
   ctx: AggregatorContext,
@@ -27,16 +33,46 @@ export function runAggregator(
 ): EngineSnapshot {
   const notes: string[] = [];
 
+  // 0) Always run Entry Engine (structured decision)
+  let entryDecision: EntryDecision | null = null;
+
+  try {
+    const entryInput: EntryEngineInput = {
+      price: ctx.price ?? null,
+      hasOpenTrade: ctx.hasOpenTrade ?? false,
+      session: ctx.session ?? null,
+      twentyEmaAboveTwoHundred: ctx.twentyEmaAboveTwoHundred,
+      atAllTimeHigh: ctx.atAllTimeHigh,
+      sweptAsiaHigh: ctx.sweptAsiaHigh,
+      sweptAsiaLow: ctx.sweptAsiaLow,
+      sweptLondonHigh: ctx.sweptLondonHigh,
+      sweptLondonLow: ctx.sweptLondonLow,
+      now: Date.now(),
+    };
+
+    entryDecision = evaluateEntry(entryInput);
+
+    if (process.env.NODE_ENV === "development") {
+      console.log("[SPICE][EntryEngine]", entryDecision);
+    }
+  } catch (err) {
+    console.error("[SPICE] Error computing entryDecision:", err);
+  }
+
+  // 1) If no valid price, stay idle (but we already computed entryDecision)
   const { price } = ctx;
   if (price == null || Number.isNaN(price)) {
     notes.push("No valid price — engine idle.");
-    return idleSnapshot(null, source, notes);
+    return idleSnapshot(null, source, notes, entryDecision);
   }
 
-  // 1) Determine bias
+  // 2) Determine bias
   const bias = getBias(ctx, notes);
 
-  // 2) Entry logic (only if no open trade)
+  // 3) Multi-Timeframe Engine
+  const mteResult = computeMultiTimeframeState(ctx as any);
+
+  // 4) Entry / Exit *signals* (high-level engine recommendations)
   let entrySignal: EngineEntrySignal | null = null;
   let exitSignal: EngineExitSignal | null = null;
 
@@ -46,29 +82,106 @@ export function runAggregator(
     exitSignal = getExitSignal(ctx, bias, notes);
   }
 
-  // 3) 🔥 NEW – structured exitDecision using LiveTrade + current context
+  // 5) Structured exitDecision using LiveTrade + current context
   let exitDecision: ExitDecision | null = null;
 
   try {
     const state = useSpiceStore.getState();
-    const liveTrade: LiveTrade | null = state.liveTrade ?? null;
+    const liveTrade: LiveTrade | null = (state as any).liveTrade ?? null;
 
-    if (liveTrade && liveTrade.isOpen) {
-      exitDecision = evaluateExit({
-        market: {
-          price,
-          // you can wire real numeric EMAs later if/when they exist
-          ema20: undefined,
-          ema200: undefined,
-          // map your existing sweep flags into generic “highs / lows swept”
-          sweptHighs: ctx.sweptAsiaHigh || ctx.sweptLondonHigh,
-          sweptLows: ctx.sweptLondonLow,
-        },
-        trade: liveTrade,
-      });
+    if (liveTrade && (liveTrade as any).isOpen) {
+      exitDecision = evaluateExit(
+        {
+          market: {
+            price,
+            ema20: undefined,
+            ema200: undefined,
+          },
+          trade: liveTrade,
+        } as any
+      );
     }
   } catch (err) {
     console.error("[SPICE] Error computing exitDecision:", err);
+  }
+
+  // 6) 🔥 Open a live trade when entryDecision says YES
+  try {
+    if (
+      entryDecision &&
+      entryDecision.shouldEnter &&
+      !ctx.hasOpenTrade &&
+      price != null
+    ) {
+      console.log(
+        "[SPICE] Opening live trade from entry engine:",
+        entryDecision
+      );
+
+      useSpiceStore.setState((state: any) => {
+        const newTrade: any = {
+          ...(state.liveTrade ?? {}),
+          id:
+            state.liveTrade?.id ??
+            `spice-trade-${Date.now().toString(36)}`,
+          direction: entryDecision.direction ?? null,
+          entryPrice: price,
+          entryTime: Date.now(),
+          isOpen: true,
+        };
+
+        return {
+          ...state,
+          hasOpenTrade: true,
+          liveTrade: newTrade,
+        } as any;
+      });
+
+      notes.push("Opened live trade from entry engine.");
+    }
+  } catch (err) {
+    console.error("[SPICE] Error opening live trade from entryDecision:", err);
+  }
+
+  // 7) 🔥 Close the live trade when exitDecision says to exit
+  try {
+    if (exitDecision && ctx.hasOpenTrade && price != null) {
+      const ed: any = exitDecision as any;
+
+      const shouldClose =
+        ed.shouldExit === true ||
+        ed.action === "close" ||
+        ed.action === "exit";
+
+      if (shouldClose) {
+        console.log("[SPICE] Closing live trade from exit engine:", ed);
+
+        useSpiceStore.setState((state: any) => {
+          if (!state.liveTrade) return state;
+
+          const updatedTrade: any = {
+            ...state.liveTrade,
+            isOpen: false,
+            exitPrice: price,
+            exitTime: Date.now(),
+            exitReason:
+              ed.reason ??
+              ed.label ??
+              "Exit engine requested close.",
+          };
+
+          return {
+            ...state,
+            hasOpenTrade: false,
+            liveTrade: updatedTrade,
+          } as any;
+        });
+
+        notes.push("Closed live trade from exit engine.");
+      }
+    }
+  } catch (err) {
+    console.error("[SPICE] Error closing live trade from exitDecision:", err);
   }
 
   return {
@@ -76,7 +189,9 @@ export function runAggregator(
     bias,
     entrySignal,
     exitSignal,
-    exitDecision, // 🔥 NEW field
+    exitDecision,
+    entryDecision,
+    mte: mteResult,
     debug: {
       source,
       updatedAt: nowIso(),
@@ -88,14 +203,17 @@ export function runAggregator(
 function idleSnapshot(
   price: number | null,
   source: EngineSource,
-  notes: string[]
+  notes: string[],
+  entryDecision: EntryDecision | null
 ): EngineSnapshot {
   return {
     lastPrice: price,
     bias: "neutral",
     entrySignal: null,
     exitSignal: null,
-    exitDecision: null, // 🔥 NEW: keep shape consistent
+    exitDecision: null,
+    entryDecision,
+    mte: null,
     debug: {
       source,
       updatedAt: nowIso(),
@@ -124,7 +242,7 @@ function getBias(ctx: AggregatorContext, notes: string[]): Bias {
 }
 
 // -----------------------------
-// Entry Logic
+// Entry Logic (signal layer)
 // -----------------------------
 
 function getEntrySignal(
@@ -132,16 +250,12 @@ function getEntrySignal(
   bias: Bias,
   notes: string[]
 ): EngineEntrySignal | null {
-  // News filter: if news impact is ON, be more picky
   if (ctx.newsImpactOn) {
     notes.push("News impact ON → stricter filters for entries.");
   } else {
     notes.push("News impact OFF → ignoring news in entry filters.");
   }
 
-  // Example long idea:
-  // - Long bias
-  // - Swept London low during NY session (liquidity grab)
   if (
     bias === "long" &&
     ctx.session === "new-york" &&
@@ -156,9 +270,6 @@ function getEntrySignal(
     };
   }
 
-  // Example short idea:
-  // - Short bias
-  // - Swept Asia high or London high in NY
   if (
     bias === "short" &&
     ctx.session === "new-york" &&
@@ -174,7 +285,6 @@ function getEntrySignal(
     };
   }
 
-  // If at ATH with long bias and news is OFF, you might still try a breakout.
   if (bias === "long" && ctx.atAllTimeHigh && !ctx.newsImpactOn) {
     notes.push("At ATH with long bias & news OFF → breakout long idea.");
     return {
@@ -189,7 +299,7 @@ function getEntrySignal(
 }
 
 // -----------------------------
-// Exit Logic
+// Exit Logic (signal layer)
 // -----------------------------
 
 function getExitSignal(
@@ -197,9 +307,6 @@ function getExitSignal(
   bias: Bias,
   notes: string[]
 ): EngineExitSignal | null {
-  // Very simple starter logic:
-  // - If bias flips against current trade environment → reduce or exit
-
   if (bias === "neutral") {
     notes.push("Bias neutral while in trade → consider partial reduce.");
     return {

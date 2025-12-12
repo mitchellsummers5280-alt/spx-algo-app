@@ -1,61 +1,64 @@
 // lib/aggregator/aggregatorTypes.ts
 
 import type { ExitDecision } from "../engines/exitEngine";
+import type { EntryDecision } from "../engines/entryEngine";
 
-export type EngineSource = "price" | "timer";
+// Where the snapshot came from (price engine, backtest, etc.)
+export type EngineSource = "live" | "replay" | "backtest";
 
 export type Bias = "long" | "short" | "neutral";
 
-export type EntryDirection = "long" | "short";
-
-export type ExitAction = "take-profit" | "stop-loss" | "reduce" | "hold";
-
-export type EngineEntrySignal = {
-  direction: EntryDirection;
+export interface EngineEntrySignal {
+  direction: "long" | "short";
   reason: string;
-  time: string; // ISO string
-};
+  time: string; // ISO
+}
 
-export type EngineExitSignal = {
-  action: ExitAction;
+export interface EngineExitSignal {
+  action: "hold" | "reduce" | "close";
   reason: string;
-  time: string; // ISO string
-};
+  time: string; // ISO
+}
 
-export type EngineSnapshot = {
+// You can tighten this later if you have a real type from the MTE
+export type MultiTimeframeSnapshot = any;
+
+export interface AggregatorContext {
+  // core price + state
+  price: number | null;
+  hasOpenTrade: boolean;
+
+  // session + bias flags
+  session: string | null;
+  twentyEmaAboveTwoHundred?: boolean | null;
+  atAllTimeHigh?: boolean | null;
+
+  // sweeps
+  sweptAsiaHigh?: boolean;
+  sweptAsiaLow?: boolean;
+  sweptLondonHigh?: boolean;
+  sweptLondonLow?: boolean;
+
+  // news toggle
+  newsImpactOn: boolean;
+}
+
+export interface EngineSnapshot {
   lastPrice: number | null;
   bias: Bias;
   entrySignal: EngineEntrySignal | null;
   exitSignal: EngineExitSignal | null;
-  exitDecision: ExitDecision | null; // 🔥 NEW
+
+  // Structured engines
+  exitDecision: ExitDecision | null;
+  entryDecision: EntryDecision | null; // 🔥 NEW
+
+  // Multi-Timeframe Engine snapshot
+  mte: MultiTimeframeSnapshot | null;
+
   debug: {
     source: EngineSource;
-    updatedAt: string;
+    updatedAt: string; // ISO
     notes: string[];
   };
-};
-
-/**
- * What the aggregator needs to make a decision.
- * These fields should line up with what we eventually store in spiceStore.
- */
-export type AggregatorContext = {
-  price: number | null;
-  hasOpenTrade: boolean;
-
-  // Sessions
-  session: "asia" | "london" | "new-york" | "off";
-
-  // Trend / structure
-  twentyEmaAboveTwoHundred: boolean;
-  atAllTimeHigh: boolean;
-
-  // Liquidity sweeps
-  sweptAsiaHigh: boolean;
-  sweptAsiaLow: boolean;
-  sweptLondonHigh: boolean;
-  sweptLondonLow: boolean;
-
-  // News toggle
-  newsImpactOn: boolean;
-};
+}

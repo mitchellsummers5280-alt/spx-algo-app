@@ -1,197 +1,205 @@
 // app/journal/page.tsx
 "use client";
 
-import { useMemo } from "react";
-import { useJournalStore } from "@/lib/store/journalStore";
-import type { JournalEntry } from "@/lib/journal/journalTypes";
+import { useMemo, useState } from "react";
+import { useJournalStore } from "lib/store/journalStore";
 
-function formatDateTime(iso: string) {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleString(undefined, {
-    month: "short",
+function formatDate(ms: number | undefined) {
+  if (!ms) return "-";
+  return new Date(ms).toLocaleString("en-US", {
+    month: "2-digit",
     day: "2-digit",
     hour: "2-digit",
     minute: "2-digit",
   });
 }
 
-function formatNumber(n: number | null | undefined, digits = 1) {
-  if (n === null || n === undefined) return "—";
-  return n.toFixed(digits);
-}
-
 export default function JournalPage() {
-  const entries = useJournalStore((s) => s.entries);
+  const trades = useJournalStore((s) => s.trades);
+  const updateNotes = useJournalStore((s) => s.updateNotes);
+  const clearAllTrades = useJournalStore((s) => s.clearAllTrades);
 
-  const sortedEntries = useMemo(
-    () =>
-      [...entries].sort((a, b) =>
-        (b.closedAt || "").localeCompare(a.closedAt || "")
-      ),
-    [entries]
-  );
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [notesDraft, setNotesDraft] = useState("");
 
   const stats = useMemo(() => {
-    if (entries.length === 0) {
-      return {
-        total: 0,
-        wins: 0,
-        losses: 0,
-        breakevens: 0,
-        winRate: 0,
-        avgPnl: 0,
-      };
-    }
+    if (!trades.length) return null;
 
-    let wins = 0;
-    let losses = 0;
-    let breakevens = 0;
-    let pnlSum = 0;
+    const closed = trades.filter((t) => t.status === "CLOSED" && typeof t.pnl === "number");
+    const wins = closed.filter((t) => (t.pnl ?? 0) > 0);
+    const losses = closed.filter((t) => (t.pnl ?? 0) < 0);
 
-    for (const e of entries) {
-      if (e.result === "win") wins++;
-      else if (e.result === "loss") losses++;
-      else if (e.result === "breakeven") breakevens++;
+    const totalPnl = closed.reduce((sum, t) => sum + (t.pnl ?? 0), 0);
+    const winRate = closed.length ? (wins.length / closed.length) * 100 : 0;
 
-      pnlSum += e.pnlPoints ?? 0;
-    }
-
-    const total = entries.length;
-    const winRate = total ? (wins / total) * 100 : 0;
-    const avgPnl = total ? pnlSum / total : 0;
-
-    return { total, wins, losses, breakevens, winRate, avgPnl };
-  }, [entries]);
+    return {
+      totalTrades: trades.length,
+      closedTrades: closed.length,
+      winRate,
+      totalPnl,
+      avgWin: wins.length
+        ? wins.reduce((s, t) => s + (t.pnl ?? 0), 0) / wins.length
+        : 0,
+      avgLoss: losses.length
+        ? losses.reduce((s, t) => s + (t.pnl ?? 0), 0) / losses.length
+        : 0,
+    };
+  }, [trades]);
 
   return (
-    <main className="mx-auto flex max-w-6xl flex-col gap-4 p-4">
-      <header className="flex items-center justify-between gap-4">
-        <div>
-          <h1 className="text-lg font-semibold text-slate-100">
-            SPICE Trading Journal
-          </h1>
-          <p className="text-xs text-slate-400">
-            Every time you <span className="font-semibold">Close Trade &amp; Log</span>{" "}
-            on the Live page, a new entry appears here.
-          </p>
-        </div>
+    <div className="min-h-screen bg-black px-6 py-8 text-zinc-100">
+      <h1 className="mb-4 text-2xl font-semibold">SPICE Trading Journal</h1>
 
-        <div className="grid grid-cols-3 gap-3 rounded-xl border border-slate-800 bg-black/60 px-4 py-3 text-xs">
-          <div>
-            <div className="text-[11px] uppercase text-slate-500">Trades</div>
-            <div className="text-sm font-semibold text-slate-100">
-              {stats.total}
-            </div>
-          </div>
-          <div>
-            <div className="text-[11px] uppercase text-slate-500">Win rate</div>
-            <div className="text-sm font-semibold text-emerald-300">
-              {formatNumber(stats.winRate, 1)}%
-            </div>
-          </div>
-          <div>
-            <div className="text-[11px] uppercase text-slate-500">
-              Avg P/L (pts)
-            </div>
-            <div
-              className={`text-sm font-semibold ${
-                stats.avgPnl > 0
-                  ? "text-emerald-300"
-                  : stats.avgPnl < 0
-                  ? "text-rose-300"
-                  : "text-slate-300"
-              }`}
-            >
-              {formatNumber(stats.avgPnl, 1)}
-            </div>
+      {/* Stats Summary */}
+      <div className="mb-6 grid gap-4 md:grid-cols-3">
+        <div className="rounded-2xl border border-zinc-800 bg-zinc-950/70 p-4">
+          <div className="text-xs uppercase text-zinc-400">Total Trades</div>
+          <div className="mt-1 text-2xl font-semibold">
+            {stats?.totalTrades ?? 0}
           </div>
         </div>
-      </header>
+        <div className="rounded-2xl border border-zinc-800 bg-zinc-950/70 p-4">
+          <div className="text-xs uppercase text-zinc-400">Win Rate</div>
+          <div className="mt-1 text-2xl font-semibold">
+            {stats ? stats.winRate.toFixed(1) : "0.0"}%
+          </div>
+        </div>
+        <div className="rounded-2xl border border-zinc-800 bg-zinc-950/70 p-4">
+          <div className="text-xs uppercase text-zinc-400">Total PnL</div>
+          <div
+            className={`mt-1 text-2xl font-semibold ${
+              stats && stats.totalPnl > 0
+                ? "text-emerald-400"
+                : stats && stats.totalPnl < 0
+                ? "text-red-400"
+                : "text-zinc-100"
+            }`}
+          >
+            {stats ? stats.totalPnl.toFixed(2) : "0.00"}
+          </div>
+        </div>
+      </div>
 
-      {sortedEntries.length === 0 ? (
-        <div className="rounded-xl border border-slate-800 bg-black/60 p-6 text-sm text-slate-400">
-          No trades logged yet. Go to{" "}
-          <span className="font-semibold text-slate-200">SPICE Live</span>, start
-          a trade, and use <span className="font-semibold">Close Trade &amp; Log</span>{" "}
-          to create your first journal entry.
-        </div>
-      ) : (
-        <div className="overflow-x-auto rounded-xl border border-slate-800 bg-black/60">
-          <table className="min-w-full text-xs">
-            <thead className="bg-slate-900/80 text-[11px] uppercase text-slate-400">
-              <tr>
-                <th className="px-3 py-2 text-left">Closed</th>
-                <th className="px-3 py-2 text-left">Symbol</th>
-                <th className="px-3 py-2 text-left">Dir</th>
-                <th className="px-3 py-2 text-right">Contracts</th>
-                <th className="px-3 py-2 text-right">Entry</th>
-                <th className="px-3 py-2 text-right">Exit</th>
-                <th className="px-3 py-2 text-right">P/L (pts)</th>
-                <th className="px-3 py-2 text-left">Result</th>
-                <th className="px-3 py-2 text-left">Notes</th>
-              </tr>
-            </thead>
-            <tbody>
-              {sortedEntries.map((entry: JournalEntry) => (
-                <tr
-                  key={entry.id}
-                  className="border-t border-slate-800/80 hover:bg-slate-900/40"
-                >
-                  <td className="px-3 py-2 text-slate-300">
-                    {formatDateTime(entry.closedAt || entry.openedAt)}
-                  </td>
-                  <td className="px-3 py-2 font-mono text-slate-100">
-                    {entry.symbol}
-                  </td>
-                  <td className="px-3 py-2 text-slate-200">
-                    {entry.direction}
-                  </td>
-                  <td className="px-3 py-2 text-right text-slate-200">
-                    {entry.contracts ?? "—"}
-                  </td>
-                  <td className="px-3 py-2 text-right text-slate-200">
-                    {formatNumber(entry.entryPrice, 1)}
-                  </td>
-                  <td className="px-3 py-2 text-right text-slate-200">
-                    {formatNumber(entry.exitPrice, 1)}
-                  </td>
-                  <td
-                    className={`px-3 py-2 text-right font-semibold ${
-                      (entry.pnlPoints ?? 0) > 0
-                        ? "text-emerald-300"
-                        : (entry.pnlPoints ?? 0) < 0
-                        ? "text-rose-300"
-                        : "text-slate-300"
-                    }`}
+      {/* Trade Table */}
+      <div className="overflow-x-auto rounded-2xl border border-zinc-800 bg-zinc-950/70">
+        <table className="min-w-full text-sm">
+          <thead className="bg-zinc-900/70 text-xs uppercase text-zinc-400">
+            <tr>
+              <th className="px-3 py-2 text-left">Opened</th>
+              <th className="px-3 py-2 text-left">Direction</th>
+              <th className="px-3 py-2 text-left">Setup</th>
+              <th className="px-3 py-2 text-right">Entry</th>
+              <th className="px-3 py-2 text-right">Exit</th>
+              <th className="px-3 py-2 text-right">Contracts</th>
+              <th className="px-3 py-2 text-right">PnL</th>
+              <th className="px-3 py-2 text-left">Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {trades.map((t) => (
+              <tr
+                key={t.id}
+                className="border-t border-zinc-800/70 hover:bg-zinc-900/40"
+                onClick={() => {
+                  setSelectedId(t.id);
+                  setNotesDraft(t.notes ?? "");
+                }}
+              >
+                <td className="px-3 py-2">{formatDate(t.openedAt)}</td>
+                <td className="px-3 py-2">
+                  <span
+                    className={
+                      t.direction === "CALL"
+                        ? "rounded-full bg-emerald-500/10 px-2 py-0.5 text-xs text-emerald-400"
+                        : "rounded-full bg-red-500/10 px-2 py-0.5 text-xs text-red-400"
+                    }
                   >
-                    {formatNumber(entry.pnlPoints, 1)}
-                  </td>
-                  <td className="px-3 py-2">
+                    {t.direction}
+                  </span>
+                </td>
+                <td className="px-3 py-2 text-xs text-zinc-300">
+                  {t.setupTag ?? "-"}
+                </td>
+                <td className="px-3 py-2 text-right">
+                  {t.entryPrice.toFixed(2)}
+                </td>
+                <td className="px-3 py-2 text-right">
+                  {t.exitPrice !== undefined ? t.exitPrice.toFixed(2) : "-"}
+                </td>
+                <td className="px-3 py-2 text-right">{t.contracts}</td>
+                <td className="px-3 py-2 text-right">
+                  {t.pnl !== undefined ? (
                     <span
-                      className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${
-                        entry.result === "win"
-                          ? "bg-emerald-500/10 text-emerald-300 border border-emerald-500/40"
-                          : entry.result === "loss"
-                          ? "bg-rose-500/10 text-rose-300 border border-rose-500/40"
-                          : "bg-slate-700/40 text-slate-200 border border-slate-600/60"
-                      }`}
+                      className={
+                        t.pnl > 0
+                          ? "text-emerald-400"
+                          : t.pnl < 0
+                          ? "text-red-400"
+                          : "text-zinc-100"
+                      }
                     >
-                      {entry.result}
+                      {t.pnl.toFixed(2)}
                     </span>
-                  </td>
-                  <td className="max-w-xs px-3 py-2 text-slate-300">
-                    <span className="line-clamp-2">
-                      {entry.notes?.trim() || "—"}
-                    </span>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                  ) : (
+                    "-"
+                  )}
+                </td>
+                <td className="px-3 py-2 text-xs text-zinc-400">
+                  {t.status}
+                </td>
+              </tr>
+            ))}
+
+            {!trades.length && (
+              <tr>
+                <td
+                  colSpan={8}
+                  className="px-3 py-6 text-center text-sm text-zinc-500"
+                >
+                  No trades logged yet. When SPICE calls a setup and you take it
+                  on Robinhood, log it here so we can track performance.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Notes editor for selected trade */}
+      {selectedId && (
+        <div className="mt-6 rounded-2xl border border-zinc-800 bg-zinc-950/70 p-4">
+          <div className="mb-2 text-xs uppercase text-zinc-400">
+            Notes for Trade
+          </div>
+          <textarea
+            className="h-24 w-full rounded-lg border border-zinc-700 bg-black px-3 py-2 text-sm text-zinc-100 outline-none focus:border-emerald-500"
+            value={notesDraft}
+            onChange={(e) => setNotesDraft(e.target.value)}
+          />
+          <div className="mt-3 flex gap-2">
+            <button
+              className="rounded-xl border border-zinc-700 px-3 py-1.5 text-xs text-zinc-200 hover:border-emerald-500 hover:text-emerald-400"
+              onClick={() => {
+                updateNotes(selectedId, notesDraft);
+              }}
+            >
+              Save Notes
+            </button>
+            <button
+              className="rounded-xl border border-red-700/70 px-3 py-1.5 text-xs text-red-300 hover:border-red-500"
+              onClick={() => {
+                if (confirm("Clear ALL trades from the journal?")) {
+                  clearAllTrades();
+                  setSelectedId(null);
+                  setNotesDraft("");
+                }
+              }}
+            >
+              Clear All Trades
+            </button>
+          </div>
         </div>
       )}
-    </main>
+    </div>
   );
 }
