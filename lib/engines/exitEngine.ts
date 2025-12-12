@@ -109,4 +109,8 @@ export function computeExitRecommendation(
   ctx: ExitContext
 ): ExitRecommendation {
   return runExitEngine(ctx);
+
 }
+
+  // Compatibility export (older aggregator expects this name)
+export const evaluateExit = runExitEngine;

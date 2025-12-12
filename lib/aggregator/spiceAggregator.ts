@@ -6,7 +6,7 @@ import type { LiveTrade } from "../tradeTypes";
 import { computeMultiTimeframeState } from "lib/engines/multiTimeframeEngine";
 
 import {
-  evaluateEntry,
+  runEntryEngine,
   type EntryEngineInput,
   type EntryDecision,
 } from "../engines/entryEngine";
@@ -50,7 +50,7 @@ export function runAggregator(
       now: Date.now(),
     };
 
-    entryDecision = evaluateEntry(entryInput);
+    const entry = runEntryEngine(entryInput);
 
     if (process.env.NODE_ENV === "development") {
       console.log("[SPICE][EntryEngine]", entryDecision);

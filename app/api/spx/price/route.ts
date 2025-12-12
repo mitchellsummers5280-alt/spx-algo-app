@@ -1,7 +1,7 @@
 // app/api/spx/price/route.ts
 import { NextResponse } from "next/server";
 
-const TICKER = "SPX"; // or "SPX.X" / "SPXW" if your Polygon plan uses a different symbol
+const TICKER = "I:SPX";
 
 export async function GET() {
   const apiKey = process.env.POLYGON_API_KEY;
@@ -13,37 +13,45 @@ export async function GET() {
     );
   }
 
-  try {
-    const url = `https://api.polygon.io/v2/last/trade/${encodeURIComponent(
-      TICKER
-    )}?apiKey=${apiKey}`;
+  // Use the endpoint that works for your key/plan and for indices
+  const url = `https://api.polygon.io/v2/aggs/ticker/${encodeURIComponent(
+    TICKER
+  )}/prev?adjusted=true&apiKey=${apiKey}`;
 
+  try {
     const res = await fetch(url, { cache: "no-store" });
+
     if (!res.ok) {
+      const text = await res.text().catch(() => "");
       return NextResponse.json(
-        { error: `Polygon HTTP ${res.status}` },
+        { error: `Polygon HTTP ${res.status}`, details: text.slice(0, 300) },
         { status: 502 }
       );
     }
 
     const data = await res.json();
 
-    // Polygon can return slightly different shapes depending on endpoint
     const price =
-      data?.results?.p ?? // typical "last trade" format
-      data?.last?.price ?? // some legacy formats
-      null;
+      typeof data?.results?.[0]?.c === "number" ? data.results[0].c : null;
 
-    if (typeof price !== "number") {
+    const t =
+      typeof data?.results?.[0]?.t === "number" ? data.results[0].t : null;
+
+    if (price == null) {
       return NextResponse.json(
-        { error: "No price in Polygon response", raw: data },
+        { error: "No close price in Polygon response", raw: data },
         { status: 502 }
       );
     }
 
-    return NextResponse.json({ price });
+    return NextResponse.json({
+      ticker: TICKER,
+      price,
+      t,
+      source: "polygon_aggs_prev",
+    });
   } catch (err) {
-    console.error("Polygon price error:", err);
+    console.error("Polygon price route error:", err);
     return NextResponse.json(
       { error: "Failed to fetch from Polygon" },
       { status: 500 }

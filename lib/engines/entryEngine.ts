@@ -109,4 +109,8 @@ export function runEntryEngine(ctx: AggregatorContext): EntryDecision {
 
   // Fallback (shouldn't really hit with current bias logic)
   return makeDecision(false);
+
 }
+
+// Compatibility export (older aggregator expects this name)
+export const evaluateEntry = runEntryEngine;
