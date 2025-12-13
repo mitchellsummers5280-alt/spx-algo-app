@@ -13,6 +13,44 @@ type ApiCandle = {
   c: number;
 };
 
+type Candle = {
+  t: number;
+  o: number;
+  h: number;
+  l: number;
+  c: number;
+  closed: boolean;
+};
+
+function aggregateToTf(raw1m: Candle[], tfMs: number): Candle[] {
+  // assumes raw1m sorted ascending by t
+  const out: Candle[] = [];
+  let cur: Candle | null = null;
+
+  for (const x of raw1m) {
+    const bucket = x.t - (x.t % tfMs);
+
+    if (!cur || cur.t !== bucket) {
+      if (cur) out.push({ ...cur, closed: true });
+      cur = {
+        t: bucket,
+        o: x.o,
+        h: x.h,
+        l: x.l,
+        c: x.c,
+        closed: true,
+      };
+    } else {
+      cur.h = Math.max(cur.h, x.h);
+      cur.l = Math.min(cur.l, x.l);
+      cur.c = x.c;
+    }
+  }
+
+  if (cur) out.push({ ...cur, closed: true });
+  return out;
+}
+
 export function usePolygonLive() {
   const setPrice = useSpiceStore((s) => s.setPrice);
 
@@ -20,6 +58,7 @@ export function usePolygonLive() {
   const seedHistory = useCandleStore((s) => s.seedHistory);
 
   const lastPriceRef = useRef<number | null>(null);
+  const seededRef = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -41,9 +80,11 @@ export function usePolygonLive() {
 
         if (cancelled || p == null) return;
 
+        // Always set price. Only update candles on change to reduce churn.
+        setPrice(p);
+
         if (lastPriceRef.current !== p) {
           lastPriceRef.current = p;
-          setPrice(p);
           updateFromTick(p, Date.now());
         }
       } catch {
@@ -51,7 +92,8 @@ export function usePolygonLive() {
       }
     };
 
-    const fetchCandles = async () => {
+    const seedCandlesOnce = async () => {
+      if (seededRef.current) return;
       try {
         const res = await fetch("/api/polygon/candles", { cache: "no-store" });
         if (!res.ok) return;
@@ -60,9 +102,9 @@ export function usePolygonLive() {
         if (cancelled) return;
 
         if (Array.isArray(data.candles) && data.candles.length > 0) {
-          seedHistory(
-            "1m",
-            data.candles.map((c) => ({
+          // Normalize + sort
+          const oneMin: Candle[] = data.candles
+            .map((c) => ({
               t: c.t,
               o: c.o,
               h: c.h,
@@ -70,23 +112,32 @@ export function usePolygonLive() {
               c: c.c,
               closed: true,
             }))
-          );
+            .sort((a, b) => a.t - b.t);
+
+          // ✅ seed 1m
+          seedHistory("1m", oneMin);
+
+          // ✅ derive + seed 5m from 1m history
+          const fiveMin = aggregateToTf(oneMin, 5 * 60_000);
+          seedHistory("5m", fiveMin);
+
+          seededRef.current = true;
         }
       } catch {
         // ignore
       }
     };
 
+    // initial
     fetchPrice();
-    fetchCandles();
+    seedCandlesOnce();
 
+    // live price polling
     const priceId = setInterval(fetchPrice, 500);
-    const candleId = setInterval(fetchCandles, 30_000);
 
     return () => {
       cancelled = true;
       clearInterval(priceId);
-      clearInterval(candleId);
     };
   }, [setPrice, updateFromTick, seedHistory]);
 }

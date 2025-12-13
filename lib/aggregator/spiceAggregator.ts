@@ -1,15 +1,11 @@
 // lib/aggregator/aggregator.ts
 
-import { useSpiceStore } from "../store/spiceStore";
-import { evaluateExit, type ExitDecision } from "../engines/exitEngine";
-import type { LiveTrade } from "../tradeTypes";
+import { useSpiceStore } from "@/lib/store/spiceStore";
+import { useEngineStore } from "@/lib/store/engineStore";
+import { evaluateExit, type ExitDecision } from "@/lib/engines/exitEngine";
+import type { LiveTrade } from "@/lib/tradeTypes";
 import { computeMultiTimeframeState } from "@/lib/engines/multiTimeframeEngine";
-
-import {
-  runEntryEngine,
-  type EntryEngineInput,
-  type EntryDecision,
-} from "../engines/entryEngine";
+import { runEntryEngine, type EntryDecision } from "@/lib/engines/entryEngine";
 
 import {
   AggregatorContext,
@@ -37,26 +33,58 @@ export function runAggregator(
   let entryDecision: EntryDecision | null = null;
 
   try {
-    const entryInput: EntryEngineInput = {
-      price: ctx.price ?? null,
-      hasOpenTrade: ctx.hasOpenTrade ?? false,
-      session: ctx.session ?? null,
+    // ✅ FIX: entryEngine expects AggregatorContext, so pass ctx directly
+    const entry = runEntryEngine(ctx);
+
+    // ✅ FIX: actually store the decision we computed
+    entryDecision = entry;
+
+    // ✅ PHASE 2 VALIDATION: always publish "why not" info
+    const blockedBy: string[] = [];
+
+    if (ctx.price == null || Number.isNaN(ctx.price)) blockedBy.push("price missing/invalid");
+    if (ctx.hasOpenTrade) blockedBy.push("already in trade (hasOpenTrade=true)");
+    if (!ctx.session) blockedBy.push("session missing");
+    if (ctx.twentyEmaAboveTwoHundred == null) blockedBy.push("trend flag undefined (20>200)");
+    if (ctx.atAllTimeHigh == null) blockedBy.push("ATH flag undefined");
+
+    const anySweep =
+      !!ctx.sweptAsiaHigh ||
+      !!ctx.sweptAsiaLow ||
+      !!ctx.sweptLondonHigh ||
+      !!ctx.sweptLondonLow;
+    if (!anySweep) blockedBy.push("no sweep flags true");
+
+    if (!entry?.shouldEnter) blockedBy.push("entryEngine.shouldEnter=false");
+
+    useEngineStore.getState().setEntryWhyNot({
+      ts: Date.now(),
+      evaluated: true,
+      price: ctx.price ?? undefined,
+      hasOpenTrade: !!ctx.hasOpenTrade,
+      blockedBy,
       twentyEmaAboveTwoHundred: ctx.twentyEmaAboveTwoHundred,
       atAllTimeHigh: ctx.atAllTimeHigh,
       sweptAsiaHigh: ctx.sweptAsiaHigh,
       sweptAsiaLow: ctx.sweptAsiaLow,
       sweptLondonHigh: ctx.sweptLondonHigh,
       sweptLondonLow: ctx.sweptLondonLow,
-      now: Date.now(),
-    };
-
-    const entry = runEntryEngine(entryInput);
+    });
 
     if (process.env.NODE_ENV === "development") {
       console.log("[SPICE][EntryEngine]", entryDecision);
     }
   } catch (err) {
     console.error("[SPICE] Error computing entryDecision:", err);
+
+    // ✅ PHASE 2 VALIDATION: publish error state
+    try {
+      useEngineStore.getState().setEntryWhyNot({
+        ts: Date.now(),
+        evaluated: false,
+        blockedBy: ["entryEngine threw error (see console)"],
+      });
+    } catch {}
   }
 
   // 1) If no valid price, stay idle (but we already computed entryDecision)

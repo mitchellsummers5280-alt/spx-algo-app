@@ -43,6 +43,9 @@ export type SpiceStoreState = {
 
   startLiveTrade: (trade: LiveTrade) => void;
   closeTrade: () => void;
+
+  // ✅ NEW: debug-safe reset (clears trade no matter what)
+  resetTrade: () => void;
 };
 
 export const useSpiceStore = create<SpiceStoreState>((set) => ({
@@ -74,4 +77,11 @@ export const useSpiceStore = create<SpiceStoreState>((set) => ({
 
   startLiveTrade: (trade) => set({ liveTrade: trade, hasOpenTrade: true }),
   closeTrade: () => set({ liveTrade: null, hasOpenTrade: false }),
+
+  // ✅ NEW
+  resetTrade: () =>
+    set({
+      hasOpenTrade: false,
+      liveTrade: null,
+    }),
 }));

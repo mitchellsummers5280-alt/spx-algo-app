@@ -28,13 +28,12 @@ function formatShortTime(ms: number | undefined) {
 }
 
 // very simple EMA helper using candle closes
-function computeEMAFromCandles(
-  candles: any[] | undefined,
-  length: number
-): number | null {
+function computeEMAFromCandles(candles: any[] | undefined, length: number) {
   if (!candles || candles.length === 0) return null;
 
-  const closes = candles.map((c) => c.close).filter((v: any) => typeof v === "number");
+  const closes = candles
+    .map((x: any) => x.c ?? x.close)
+    .filter((v: any) => typeof v === "number");
   if (closes.length === 0) return null;
 
   const k = 2 / (length + 1);
@@ -52,7 +51,7 @@ export default function Page() {
   usePolygonLive();
   useSpiceEngine();
 
-  // 🔹 core SPICE state (one selector per field so Zustand is happy)
+  // 🔹 core SPICE state
   const price = useSpiceStore((s) => s.price);
   const session = useSpiceStore((s) => s.session);
   const hasOpenTrade = useSpiceStore((s) => s.hasOpenTrade);
@@ -67,26 +66,39 @@ export default function Page() {
   const sweptAsiaLow = useSpiceStore((s) => s.sweptAsiaLow);
   const sweptLondonHigh = useSpiceStore((s) => s.sweptLondonHigh);
   const sweptLondonLow = useSpiceStore((s) => s.sweptLondonLow);
-  const sweptNyHigh = useSpiceStore((s) => s.sweptNyHigh);
-  const sweptNyLow = useSpiceStore((s) => s.sweptNyLow);
+  const sweptNyHigh = useSpiceStore((s) => (s as any).sweptNyHigh);
+  const sweptNyLow = useSpiceStore((s) => (s as any).sweptNyLow);
 
-  const asiaHigh = useSpiceStore((s) => s.asiaHigh);
-  const asiaLow = useSpiceStore((s) => s.asiaLow);
-  const londonHigh = useSpiceStore((s) => s.londonHigh);
-  const londonLow = useSpiceStore((s) => s.londonLow);
-  const nyHigh = useSpiceStore((s) => s.nyHigh);
-  const nyLow = useSpiceStore((s) => s.nyLow);
+  const asiaHigh = useSpiceStore((s) => (s as any).asiaHigh);
+  const asiaLow = useSpiceStore((s) => (s as any).asiaLow);
+  const londonHigh = useSpiceStore((s) => (s as any).londonHigh);
+  const londonLow = useSpiceStore((s) => (s as any).londonLow);
+  const nyHigh = useSpiceStore((s) => (s as any).nyHigh);
+  const nyLow = useSpiceStore((s) => (s as any).nyLow);
 
-  // 🔹 entry engine state
-  const entryDecision = useEngineStore((s) => s.entryDecision);
-  const lastEntryRunAt = useEngineStore((s) => s.lastEntryRunAt);
+  // ✅ this is the only new “must-have” selector for today
+  // (it assumes your spiceStore has resetTrade; if not, we’ll add it next)
+  const resetTrade = useSpiceStore((s) => (s as any).resetTrade);
+
+  // 🔹 engine snapshot + phase2 trace
+  const engineSnapshot = useEngineStore((s) => s.snapshot);
+  const entryWhyNot = useEngineStore((s) => s.entryWhyNot);
+
+  // ✅ entry decision comes from engine snapshot
+  const entryDecision = engineSnapshot?.entryDecision ?? null;
+
+  // ✅ last updated time comes from snapshot.debug.updatedAt (ISO string)
+  const lastUpdatedIso = engineSnapshot?.debug?.updatedAt || "";
+  const lastUpdatedMs = lastUpdatedIso ? Date.parse(lastUpdatedIso) : null;
 
   // 🔹 journal
   const logNewTrade = useJournalStore((s) => s.logNewTrade);
 
-  // 🔹 candles (we'll use them for both latest view + tables + EMAs)
-  const oneMinCandles = useCandleStore((s) => s.byTimeframe?.["1min"]);
-  const fiveMinCandles = useCandleStore((s) => s.byTimeframe?.["5min"]);
+  // ✅ candles
+  const oneMinCandles = useCandleStore((s) => s.candlesByTf["1m"]);
+  const fiveMinCandles = useCandleStore((s) => s.candlesByTf["5m"]);
+  const lastUpdated1m = useCandleStore((s) => s.lastUpdatedByTf["1m"]);
+  const lastUpdated5m = useCandleStore((s) => s.lastUpdatedByTf["5m"]);
 
   const latestCandle =
     oneMinCandles && oneMinCandles.length > 0
@@ -115,12 +127,11 @@ export default function Page() {
       entryDecision.direction === "CALL"
         ? "LONG (CALL)"
         : entryDecision.direction === "PUT"
-          ? "SHORT (PUT)"
-          : "NONE";
+        ? "SHORT (PUT)"
+        : "NONE";
 
     return {
-      label: `Decision: ${entryDecision.shouldEnter ? dir : "NO-TRADE"
-        }`,
+      label: `Decision: ${entryDecision.shouldEnter ? dir : "NO-TRADE"}`,
       reason: entryDecision.reason ?? "No reason provided",
     };
   }, [entryDecision]);
@@ -128,6 +139,58 @@ export default function Page() {
   const trendLabel = twentyEmaAboveTwoHundred
     ? "BULLISH (20 > 200)"
     : "BEARISH (20 < 200)";
+
+  // -------------------------------------------------------
+  // ✅ DEBUG CONTROLS (SAFE)
+  // -------------------------------------------------------
+
+  const clearSweeps = () => {
+    useSpiceStore.setState({
+      sweptAsiaHigh: false,
+      sweptAsiaLow: false,
+      sweptLondonHigh: false,
+      sweptLondonLow: false,
+      sweptNyHigh: false,
+      sweptNyLow: false,
+    } as any);
+  };
+
+  const forceSweep = (
+    which:
+      | "londonHigh"
+      | "londonLow"
+      | "asiaHigh"
+      | "asiaLow"
+      | "nyHigh"
+      | "nyLow"
+  ) => {
+    clearSweeps();
+
+    if (which === "londonHigh")
+      useSpiceStore.setState({ sweptLondonHigh: true } as any);
+    if (which === "londonLow")
+      useSpiceStore.setState({ sweptLondonLow: true } as any);
+    if (which === "asiaHigh")
+      useSpiceStore.setState({ sweptAsiaHigh: true } as any);
+    if (which === "asiaLow")
+      useSpiceStore.setState({ sweptAsiaLow: true } as any);
+    if (which === "nyHigh")
+      useSpiceStore.setState({ sweptNyHigh: true } as any);
+    if (which === "nyLow")
+      useSpiceStore.setState({ sweptNyLow: true } as any);
+  };
+
+  const setTrend = (bull: boolean) => {
+    useSpiceStore.setState({ twentyEmaAboveTwoHundred: bull } as any);
+  };
+
+  const setSession = (s: any) => {
+    useSpiceStore.setState({ session: s } as any);
+  };
+
+  const toggleATH = () => {
+    useSpiceStore.setState({ atAllTimeHigh: !atAllTimeHigh } as any);
+  };
 
   // for tables: newest on top, cap to last ~30 candles
   const oneMinDisplay = useMemo(() => {
@@ -140,12 +203,19 @@ export default function Page() {
     return [...fiveMinCandles].slice(-30).reverse();
   }, [fiveMinCandles]);
 
+  // ✅ robust “opened time” display (some code uses openedAt, some entryTime)
+  const liveTradeOpenedMs: number | null =
+    (liveTrade as any)?.openedAt ??
+    (liveTrade as any)?.entryTime ??
+    (liveTrade as any)?.entryAt ??
+    null;
+
   return (
     <div className="min-h-screen bg-black px-6 py-8 text-zinc-100">
       <h1 className="mb-1 text-2xl font-semibold">SPICE · MTE Debug</h1>
       <p className="mb-4 text-xs text-zinc-500">
-        Live view of candles, EMAs, sweeps, trend state, entry engine, and
-        manual execution.
+        Live view of candles, EMAs, sweeps, trend state, entry engine, and manual
+        execution.
       </p>
 
       {/* TOP ROW: price / EMAs / sweeps summary */}
@@ -158,15 +228,16 @@ export default function Page() {
               {session ?? "UNKNOWN"}
             </span>
           </div>
+
           <div className="mt-2 text-3xl font-semibold">
             {price ? price.toFixed(2) : "…"}
           </div>
+
           {latestCandle && (
             <div className="mt-2 text-xs text-zinc-500">
-              Last 1m: O {latestCandle.open.toFixed(2)} · H{" "}
-              {latestCandle.high.toFixed(2)} · L{" "}
-              {latestCandle.low.toFixed(2)} · C{" "}
-              {latestCandle.close.toFixed(2)}
+              Last 1m: O {latestCandle.o.toFixed(2)} · H{" "}
+              {latestCandle.h.toFixed(2)} · L {latestCandle.l.toFixed(2)} · C{" "}
+              {latestCandle.c.toFixed(2)}
             </div>
           )}
         </div>
@@ -181,6 +252,7 @@ export default function Page() {
               Primary TF: 5m
             </span>
           </div>
+
           <div className="mt-3 grid gap-2 text-sm md:grid-cols-2">
             <div>
               <div className="text-xs text-zinc-400">20 EMA</div>
@@ -195,6 +267,7 @@ export default function Page() {
               </div>
             </div>
           </div>
+
           <div className="mt-3 text-xs text-zinc-400">
             Trend:{" "}
             <span
@@ -204,6 +277,34 @@ export default function Page() {
             >
               {trendLabel}
             </span>
+          </div>
+
+          {/* ✅ quick trend/session/ATH toggles */}
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button
+              className="rounded-lg border border-zinc-700 bg-black/40 px-2 py-1 text-[11px] text-zinc-200 hover:bg-zinc-900/40"
+              onClick={() => setTrend(true)}
+            >
+              Force Trend Bull (20&gt;200)
+            </button>
+            <button
+              className="rounded-lg border border-zinc-700 bg-black/40 px-2 py-1 text-[11px] text-zinc-200 hover:bg-zinc-900/40"
+              onClick={() => setTrend(false)}
+            >
+              Force Trend Bear (20&lt;200)
+            </button>
+            <button
+              className="rounded-lg border border-zinc-700 bg-black/40 px-2 py-1 text-[11px] text-zinc-200 hover:bg-zinc-900/40"
+              onClick={() => setSession("new-york")}
+            >
+              Force Session: New York
+            </button>
+            <button
+              className="rounded-lg border border-zinc-700 bg-black/40 px-2 py-1 text-[11px] text-zinc-200 hover:bg-zinc-900/40"
+              onClick={toggleATH}
+            >
+              Toggle ATH
+            </button>
           </div>
         </div>
 
@@ -240,6 +341,7 @@ export default function Page() {
                 Low
               </span>
             </div>
+
             <div>
               London:{" "}
               <span
@@ -261,6 +363,7 @@ export default function Page() {
                 Low
               </span>
             </div>
+
             <div>
               New York:{" "}
               <span
@@ -273,38 +376,83 @@ export default function Page() {
                 High
               </span>{" "}
               <span
-                className=
-                {sweptNyLow
-                  ? "rounded-full bg-emerald-500/10 px-2 py-0.5 text-emerald-400"
-                  : "rounded-full bg-zinc-800 px-2 py-0.5 text-zinc-300"}
+                className={
+                  sweptNyLow
+                    ? "rounded-full bg-emerald-500/10 px-2 py-0.5 text-emerald-400"
+                    : "rounded-full bg-zinc-800 px-2 py-0.5 text-zinc-300"
+                }
               >
                 Low
               </span>
             </div>
           </div>
+
+          {/* ✅ DEBUG SWEEP CONTROLS */}
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button
+              className="rounded-lg border border-zinc-700 bg-black/40 px-2 py-1 text-[11px] text-zinc-200 hover:bg-zinc-900/40"
+              onClick={() => forceSweep("londonHigh")}
+            >
+              Force London High Sweep
+            </button>
+            <button
+              className="rounded-lg border border-zinc-700 bg-black/40 px-2 py-1 text-[11px] text-zinc-200 hover:bg-zinc-900/40"
+              onClick={() => forceSweep("londonLow")}
+            >
+              Force London Low Sweep
+            </button>
+            <button
+              className="rounded-lg border border-zinc-700 bg-black/40 px-2 py-1 text-[11px] text-zinc-200 hover:bg-zinc-900/40"
+              onClick={() => forceSweep("asiaHigh")}
+            >
+              Force Asia High Sweep
+            </button>
+            <button
+              className="rounded-lg border border-zinc-700 bg-black/40 px-2 py-1 text-[11px] text-zinc-200 hover:bg-zinc-900/40"
+              onClick={() => forceSweep("asiaLow")}
+            >
+              Force Asia Low Sweep
+            </button>
+            <button
+              className="rounded-lg border border-zinc-700 bg-black/40 px-2 py-1 text-[11px] text-zinc-200 hover:bg-zinc-900/40"
+              onClick={clearSweeps}
+            >
+              Clear Sweeps
+            </button>
+
+            {/* ✅ NEW: RESET TRADE (unsticks “already in trade”) */}
+            <button
+              className="rounded-lg border border-red-700 bg-black/40 px-2 py-1 text-[11px] text-red-200 hover:bg-red-900/20"
+              onClick={() => {
+                if (typeof resetTrade === "function") resetTrade();
+                else {
+                  // fallback safety: clear trade flags directly if store method isn't present
+                  useSpiceStore.setState({ liveTrade: null, hasOpenTrade: false } as any);
+                }
+              }}
+            >
+              Reset Trade
+            </button>
+          </div>
         </div>
       </div>
 
-      {/* ENTRY ENGINE + CURRENT TRADE + SESSION LEVELS */}
+      {/* ENTRY ENGINE + WHY-NOT + CURRENT TRADE + SESSION LEVELS */}
       <div className="mb-6 grid gap-4 md:grid-cols-3">
         {/* Entry engine big card */}
         <div className="rounded-2xl border border-zinc-800 bg-zinc-950/70 p-4 md:col-span-2">
           <div className="flex items-center justify-between">
-            <span className="text-xs uppercase text-zinc-400">
-              Entry Engine
-            </span>
+            <span className="text-xs uppercase text-zinc-400">Entry Engine</span>
             <span className="text-[10px] text-zinc-500">
-              {lastEntryRunAt
-                ? `Last engine time: ${formatTime(lastEntryRunAt)}`
+              {lastUpdatedMs
+                ? `Last engine time: ${formatTime(lastUpdatedMs)}`
                 : "No runs yet"}
             </span>
           </div>
 
           <div className="mt-3 text-sm">
             <div className="text-lg font-semibold">{entrySummary.label}</div>
-            <div className="mt-1 text-xs text-zinc-400">
-              {entrySummary.reason}
-            </div>
+            <div className="mt-1 text-xs text-zinc-400">{entrySummary.reason}</div>
           </div>
 
           {entryDecision?.debug && (
@@ -312,6 +460,34 @@ export default function Page() {
               {JSON.stringify(entryDecision.debug, null, 2)}
             </pre>
           )}
+
+          {/* ✅ PHASE 2 VALIDATION: why no trade */}
+          <div className="mt-4 rounded-xl border border-zinc-800 bg-black/30 p-3">
+            <div className="flex items-center justify-between">
+              <div className="text-[11px] font-semibold text-zinc-200">
+                Why No Trade (Phase 2)
+              </div>
+              <div className="text-[10px] text-zinc-500">
+                {entryWhyNot?.ts ? formatTime(entryWhyNot.ts) : "—"}
+              </div>
+            </div>
+
+            {!entryWhyNot?.evaluated ? (
+              <div className="mt-2 text-[12px] text-zinc-400">
+                Entry engine trace not available yet.
+              </div>
+            ) : entryWhyNot?.blockedBy?.length ? (
+              <ul className="mt-2 list-disc space-y-1 pl-5 text-[12px] text-zinc-300">
+                {entryWhyNot.blockedBy.map((b) => (
+                  <li key={b}>{b}</li>
+                ))}
+              </ul>
+            ) : (
+              <div className="mt-2 text-[12px] text-emerald-300">
+                No blocks — entry is eligible to fire.
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Current trade + session levels */}
@@ -323,10 +499,11 @@ export default function Page() {
                 Current Trade
               </span>
               <span
-                className={`rounded-full px-2 py-0.5 text-[10px] uppercase ${hasOpenTrade
-                  ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/60"
-                  : "bg-zinc-800 text-zinc-300 border border-zinc-700/60"
-                  }`}
+                className={`rounded-full px-2 py-0.5 text-[10px] uppercase ${
+                  hasOpenTrade
+                    ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/60"
+                    : "bg-zinc-800 text-zinc-300 border border-zinc-700/60"
+                }`}
               >
                 {hasOpenTrade ? "Open" : "Flat"}
               </span>
@@ -338,16 +515,24 @@ export default function Page() {
                   Direction:{" "}
                   <span
                     className={
-                      liveTrade.direction === "CALL"
+                      (liveTrade as any).direction === "CALL"
                         ? "text-emerald-400"
                         : "text-red-400"
                     }
                   >
-                    {liveTrade.direction}
+                    {(liveTrade as any).direction ?? "—"}
                   </span>
                 </div>
-                <div>Opened: {formatTime(liveTrade.openedAt)}</div>
-                <div>Entry price: {liveTrade.entryPrice.toFixed(2)}</div>
+                <div>
+                  Opened:{" "}
+                  {liveTradeOpenedMs ? formatTime(liveTradeOpenedMs) : "—"}
+                </div>
+                <div>
+                  Entry price:{" "}
+                  {typeof (liveTrade as any).entryPrice === "number"
+                    ? (liveTrade as any).entryPrice.toFixed(2)
+                    : "—"}
+                </div>
               </div>
             ) : (
               <div className="mt-2 text-xs text-zinc-500">
@@ -364,29 +549,29 @@ export default function Page() {
             <div className="grid grid-cols-2 gap-y-1 text-[11px]">
               <span className="text-zinc-400">Asia High</span>
               <span className="text-right">
-                {asiaHigh ? asiaHigh.toFixed(2) : "—"}
+                {asiaHigh ? Number(asiaHigh).toFixed(2) : "—"}
               </span>
               <span className="text-zinc-400">Asia Low</span>
               <span className="text-right">
-                {asiaLow ? asiaLow.toFixed(2) : "—"}
+                {asiaLow ? Number(asiaLow).toFixed(2) : "—"}
               </span>
 
               <span className="mt-1 text-zinc-400">London High</span>
               <span className="mt-1 text-right">
-                {londonHigh ? londonHigh.toFixed(2) : "—"}
+                {londonHigh ? Number(londonHigh).toFixed(2) : "—"}
               </span>
               <span className="text-zinc-400">London Low</span>
               <span className="text-right">
-                {londonLow ? londonLow.toFixed(2) : "—"}
+                {londonLow ? Number(londonLow).toFixed(2) : "—"}
               </span>
 
               <span className="mt-1 text-zinc-400">NY High</span>
               <span className="mt-1 text-right">
-                {nyHigh ? nyHigh.toFixed(2) : "—"}
+                {nyHigh ? Number(nyHigh).toFixed(2) : "—"}
               </span>
               <span className="text-zinc-400">NY Low</span>
               <span className="text-right">
-                {nyLow ? nyLow.toFixed(2) : "—"}
+                {nyLow ? Number(nyLow).toFixed(2) : "—"}
               </span>
             </div>
           </div>
@@ -399,7 +584,10 @@ export default function Page() {
         <div className="rounded-2xl border border-zinc-800 bg-zinc-950/70 p-4">
           <div className="mb-2 flex items-center justify-between text-xs text-zinc-400">
             <span>1m Candles</span>
-            <span>Total: {oneMinCandles?.length ?? 0}</span>
+            <span>
+              Total: {oneMinCandles?.length ?? 0} · Updated:{" "}
+              {lastUpdated1m ? formatTime(lastUpdated1m) : "—"}
+            </span>
           </div>
           <div className="overflow-x-auto">
             <table className="min-w-full text-[11px]">
@@ -419,7 +607,8 @@ export default function Page() {
                       colSpan={5}
                       className="px-2 py-4 text-center text-xs text-zinc-500"
                     >
-                      No candles yet — keep SPICE open for a minute or two.
+                      No candles yet — this will populate once ticks call
+                      updateFromTick().
                     </td>
                   </tr>
                 )}
@@ -428,20 +617,18 @@ export default function Page() {
                     key={idx}
                     className="border-t border-zinc-900/80 hover:bg-zinc-900/40"
                   >
-                    <td className="px-2 py-1">
-                      {formatShortTime(c.startTime ?? c.t ?? c.time)}
+                    <td className="px-2 py-1">{formatShortTime(c.t)}</td>
+                    <td className="px-2 py-1 text-right">
+                      {typeof c.o === "number" ? c.o.toFixed(2) : "—"}
                     </td>
                     <td className="px-2 py-1 text-right">
-                      {c.open?.toFixed ? c.open.toFixed(2) : "—"}
+                      {typeof c.h === "number" ? c.h.toFixed(2) : "—"}
                     </td>
                     <td className="px-2 py-1 text-right">
-                      {c.high?.toFixed ? c.high.toFixed(2) : "—"}
+                      {typeof c.l === "number" ? c.l.toFixed(2) : "—"}
                     </td>
                     <td className="px-2 py-1 text-right">
-                      {c.low?.toFixed ? c.low.toFixed(2) : "—"}
-                    </td>
-                    <td className="px-2 py-1 text-right">
-                      {c.close?.toFixed ? c.close.toFixed(2) : "—"}
+                      {typeof c.c === "number" ? c.c.toFixed(2) : "—"}
                     </td>
                   </tr>
                 ))}
@@ -454,7 +641,10 @@ export default function Page() {
         <div className="rounded-2xl border border-zinc-800 bg-zinc-950/70 p-4">
           <div className="mb-2 flex items-center justify-between text-xs text-zinc-400">
             <span>5m Candles</span>
-            <span>Total: {fiveMinCandles?.length ?? 0}</span>
+            <span>
+              Total: {fiveMinCandles?.length ?? 0} · Updated:{" "}
+              {lastUpdated5m ? formatTime(lastUpdated5m) : "—"}
+            </span>
           </div>
           <div className="overflow-x-auto">
             <table className="min-w-full text-[11px]">
@@ -474,7 +664,8 @@ export default function Page() {
                       colSpan={5}
                       className="px-2 py-4 text-center text-xs text-zinc-500"
                     >
-                      No candles yet — keep SPICE open for a few minutes.
+                      No candles yet — this will populate once ticks call
+                      updateFromTick().
                     </td>
                   </tr>
                 )}
@@ -483,20 +674,18 @@ export default function Page() {
                     key={idx}
                     className="border-t border-zinc-900/80 hover:bg-zinc-900/40"
                   >
-                    <td className="px-2 py-1">
-                      {formatShortTime(c.startTime ?? c.t ?? c.time)}
+                    <td className="px-2 py-1">{formatShortTime(c.t)}</td>
+                    <td className="px-2 py-1 text-right">
+                      {typeof c.o === "number" ? c.o.toFixed(2) : "—"}
                     </td>
                     <td className="px-2 py-1 text-right">
-                      {c.open?.toFixed ? c.open.toFixed(2) : "—"}
+                      {typeof c.h === "number" ? c.h.toFixed(2) : "—"}
                     </td>
                     <td className="px-2 py-1 text-right">
-                      {c.high?.toFixed ? c.high.toFixed(2) : "—"}
+                      {typeof c.l === "number" ? c.l.toFixed(2) : "—"}
                     </td>
                     <td className="px-2 py-1 text-right">
-                      {c.low?.toFixed ? c.low.toFixed(2) : "—"}
-                    </td>
-                    <td className="px-2 py-1 text-right">
-                      {c.close?.toFixed ? c.close.toFixed(2) : "—"}
+                      {typeof c.c === "number" ? c.c.toFixed(2) : "—"}
                     </td>
                   </tr>
                 ))}
@@ -512,22 +701,20 @@ export default function Page() {
           Manual Execution
         </div>
         <p className="mb-3 text-xs text-zinc-400">
-          When SPICE calls an entry and you actually take that trade on
-          Robinhood, click this button to log it into the SPICE journal.
+          When SPICE calls an entry and you actually take that trade on Robinhood,
+          click this button to log it into the SPICE journal.
         </p>
 
         <button
           className="rounded-xl border border-emerald-600 px-3 py-1.5 text-xs font-medium text-emerald-300 hover:bg-emerald-600/10"
           onClick={() => {
-            // use live price if available, otherwise latest 1m candle close
             const fallbackPrice =
-              latestCandle && typeof latestCandle.close === "number"
-                ? latestCandle.close
+              latestCandle && typeof latestCandle.c === "number"
+                ? latestCandle.c
                 : undefined;
 
             let effectivePrice: number | undefined = price ?? fallbackPrice;
 
-            // if still no price, allow manual input so you can test / backfill
             if (effectivePrice == null) {
               const manualStr = window.prompt(
                 "SPICE doesn't have a current price or candle yet.\nEnter the SPX price you want to log for this trade:"
@@ -544,7 +731,7 @@ export default function Page() {
 
             const direction =
               entryDecision?.direction === "CALL" ||
-                entryDecision?.direction === "PUT"
+              entryDecision?.direction === "PUT"
                 ? entryDecision.direction
                 : "CALL";
 
@@ -554,8 +741,9 @@ export default function Page() {
               contracts: 1,
               setupTag: entryDecision?.reason ?? "UNKNOWN",
               sessionTag: session ?? "UNKNOWN",
-              thesis: `SPICE Entry — ${entryDecision?.reason ?? "no reason detected"
-                }`,
+              thesis: `SPICE Entry — ${
+                entryDecision?.reason ?? "no reason detected"
+              }`,
             });
           }}
         >

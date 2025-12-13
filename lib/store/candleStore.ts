@@ -27,13 +27,25 @@ const TIMEFRAME_MS: Record<TimeframeId, number> = {
 const MAX_CANDLES = 500;
 
 export interface CandleStoreState {
+  // ✅ canonical storage
   candles: Record<TimeframeId, Candle[]>;
+
+  // ✅ compatibility alias (some code expects candlesByTf)
+  candlesByTf: Record<TimeframeId, Candle[]>;
+
+  // ✅ debug timestamps
+  lastUpdatedByTf: Record<TimeframeId, number | null>;
 
   /**
    * Seed historical candles from a REST call (Polygon aggregates).
-   * You can call this later once you have proper history endpoints.
    */
   seedHistory: (tf: TimeframeId, raw: Candle[]) => void;
+
+  /**
+   * Compatibility alias for code that expects setCandles(tf, candles)
+   * (we route it to seedHistory semantics: sorted, capped, closed=true)
+   */
+  setCandles: (tf: TimeframeId, candles: Candle[]) => void;
 
   /**
    * Hybrid tick updater:
@@ -55,6 +67,25 @@ export const useCandleStore = create<CandleStoreState>((set, get) => ({
     "4h": [],
   },
 
+  // alias points to the same object initially; we keep it synced in setters
+  candlesByTf: {
+    "1m": [],
+    "3m": [],
+    "5m": [],
+    "15m": [],
+    "30m": [],
+    "4h": [],
+  },
+
+  lastUpdatedByTf: {
+    "1m": null,
+    "3m": null,
+    "5m": null,
+    "15m": null,
+    "30m": null,
+    "4h": null,
+  },
+
   seedHistory: (tf, raw) =>
     set((state) => {
       const cloned = [...raw]
@@ -62,19 +93,31 @@ export const useCandleStore = create<CandleStoreState>((set, get) => ({
         .slice(-MAX_CANDLES)
         .map((c) => ({ ...c, closed: true }));
 
+      const nextCandles = {
+        ...state.candles,
+        [tf]: cloned,
+      };
+
       return {
-        candles: {
-          ...state.candles,
-          [tf]: cloned,
-        },
+        candles: nextCandles,
+        candlesByTf: nextCandles, // keep alias synced
+        lastUpdatedByTf: { ...state.lastUpdatedByTf, [tf]: Date.now() },
       };
     }),
+
+  setCandles: (tf, candles) => {
+    // route to seedHistory behavior (closed=true, sorted, capped)
+    get().seedHistory(tf, candles);
+  },
 
   updateFromTick: (price: number, ts?: number) => {
     const now = typeof ts === "number" ? ts : Date.now();
 
     set((state) => {
       const updated: Record<TimeframeId, Candle[]> = { ...state.candles };
+      const updatedTs: Record<TimeframeId, number | null> = {
+        ...state.lastUpdatedByTf,
+      };
 
       (Object.keys(TIMEFRAME_MS) as TimeframeId[]).forEach((tf) => {
         const tfMs = TIMEFRAME_MS[tf];
@@ -82,7 +125,6 @@ export const useCandleStore = create<CandleStoreState>((set, get) => ({
         const candles = [...(updated[tf] ?? [])];
         const last = candles[candles.length - 1];
 
-        // No candles yet → start first
         if (!last) {
           candles.push({
             t: bucketStart,
@@ -92,8 +134,8 @@ export const useCandleStore = create<CandleStoreState>((set, get) => ({
             c: price,
             closed: false,
           });
+          updatedTs[tf] = Date.now();
         } else if (last.t === bucketStart && !last.closed) {
-          // Still in the same bucket → update existing open candle
           const merged: Candle = {
             ...last,
             h: Math.max(last.h, price),
@@ -101,15 +143,10 @@ export const useCandleStore = create<CandleStoreState>((set, get) => ({
             c: price,
           };
           candles[candles.length - 1] = merged;
+          updatedTs[tf] = Date.now();
         } else if (bucketStart > last.t) {
-          // New bucket → close previous candle (if not closed) and open new one
           const closedLast: Candle =
-            last.closed === true
-              ? last
-              : {
-                  ...last,
-                  closed: true,
-                };
+            last.closed === true ? last : { ...last, closed: true };
 
           candles[candles.length - 1] = closedLast;
 
@@ -121,9 +158,9 @@ export const useCandleStore = create<CandleStoreState>((set, get) => ({
             c: price,
             closed: false,
           });
+          updatedTs[tf] = Date.now();
         }
 
-        // Trim history
         if (candles.length > MAX_CANDLES) {
           candles.splice(0, candles.length - MAX_CANDLES);
         }
@@ -131,7 +168,11 @@ export const useCandleStore = create<CandleStoreState>((set, get) => ({
         updated[tf] = candles;
       });
 
-      return { candles: updated };
+      return {
+        candles: updated,
+        candlesByTf: updated, // keep alias synced
+        lastUpdatedByTf: updatedTs,
+      };
     });
   },
 
