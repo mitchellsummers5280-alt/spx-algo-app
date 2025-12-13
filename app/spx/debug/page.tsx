@@ -2,11 +2,12 @@
 "use client";
 
 import { useMemo } from "react";
-import { useSpiceStore } from "lib/store/spiceStore";
-import { useCandleStore } from "lib/store/candleStore";
-import { useSpiceEngine } from "lib/hooks/useSpiceEngine";
-import { useEngineStore } from "lib/store/engineStore";
-import { useJournalStore } from "lib/store/journalStore";
+import { useSpiceStore } from "@/lib/store/spiceStore";
+import { useCandleStore } from "@/lib/store/candleStore";
+import { useSpiceEngine } from "@/lib/hooks/useSpiceEngine";
+import { useEngineStore } from "@/lib/store/engineStore";
+import { useJournalStore } from "@/lib/store/journalStore";
+import { usePolygonLive } from "@/lib/hooks/usePolygonLive";
 
 function formatTime(ms: number) {
   const d = new Date(ms);
@@ -48,6 +49,7 @@ function computeEMAFromCandles(
 
 export default function Page() {
   // keep SPICE engine running
+  usePolygonLive();
   useSpiceEngine();
 
   // 🔹 core SPICE state (one selector per field so Zustand is happy)

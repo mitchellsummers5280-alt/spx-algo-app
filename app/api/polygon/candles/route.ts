@@ -1,68 +1,64 @@
 // app/api/polygon/candles/route.ts
 import { NextResponse } from "next/server";
 
-// Massive REST base URL
-const MASSIVE_BASE_URL = "https://api.massive.com";
+type Candle = { t: number; o: number; h: number; l: number; c: number };
 
-// Massive index ticker for S&P 500
-const INDEX_TICKER = "I:SPX";
+function yyyymmdd(d: Date) {
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
 
-export async function GET() {
-  const apiKey = process.env.POLYGON_API_KEY;
-
-  if (!apiKey) {
-    return NextResponse.json(
-      { error: "Missing POLYGON_API_KEY in environment" },
-      { status: 500 }
-    );
-  }
-
+export async function GET(req: Request) {
   try {
-    // Use today's date in UTC for intraday 1-minute bars
+    const key = process.env.POLYGON_API_KEY;
+    if (!key) {
+      return NextResponse.json({ error: "Missing POLYGON_API_KEY" }, { status: 500 });
+    }
+
+    const { searchParams } = new URL(req.url);
+
+    // Defaults that work reliably for SPX index candles on Polygon
+    const ticker = searchParams.get("ticker") ?? "I:SPX";
+    const multiplier = Number(searchParams.get("mult") ?? "1");
+    const timespan = searchParams.get("span") ?? "minute";
+
+    // Rolling window so weekends/holidays still return candles (e.g., Friday)
     const now = new Date();
-    const yyyy = now.getUTCFullYear();
-    const mm = String(now.getUTCMonth() + 1).padStart(2, "0");
-    const dd = String(now.getUTCDate()).padStart(2, "0");
-    const today = `${yyyy}-${mm}-${dd}`; // YYYY-MM-DD
+    const fromDate = new Date(now);
+    fromDate.setDate(now.getDate() - 10);
 
-    const url = new URL(
-      `${MASSIVE_BASE_URL}/v2/aggs/ticker/${encodeURIComponent(
-        INDEX_TICKER
-      )}/range/1/minute/${today}/${today}`
-    );
+    const from = searchParams.get("from") ?? yyyymmdd(fromDate);
+    const to = searchParams.get("to") ?? yyyymmdd(now);
 
-    url.searchParams.set("sort", "asc");
-    url.searchParams.set("limit", "5000");
-    url.searchParams.set("apiKey", apiKey);
+    const url =
+      `https://api.polygon.io/v2/aggs/ticker/${encodeURIComponent(
+        ticker
+      )}/range/${multiplier}/${timespan}/${from}/${to}` +
+      `?adjusted=true&sort=asc&limit=50000&apiKey=${encodeURIComponent(key)}`;
 
-    const res = await fetch(url.toString(), { cache: "no-store" });
+    const res = await fetch(url, { cache: "no-store" });
     const data = await res.json();
 
-    // Massive-style error handling
-    if (!res.ok || data.status === "ERROR" || data.error) {
-      console.error("Massive aggregates error:", data);
+    if (!res.ok) {
       return NextResponse.json(
-        {
-          error: "Massive fetch failed",
-          details: JSON.stringify(data),
-        },
+        { error: "Polygon aggregates failed", status: res.status, data },
         { status: 500 }
       );
     }
 
-    // Pass Massive response straight through to the client
-    return NextResponse.json({
-      candles: data.results ?? [],
-      updated: Date.now(),
-    });
+    const results = Array.isArray(data?.results) ? data.results : [];
+    const candles: Candle[] = results.map((r: any) => ({
+      t: r.t,
+      o: r.o,
+      h: r.h,
+      l: r.l,
+      c: r.c,
+    }));
+
+    return NextResponse.json({ ticker, from, to, candles, updated: Date.now() });
   } catch (err: any) {
-    console.error("Massive fetch exception:", err);
-    return NextResponse.json(
-      {
-        error: "Massive fetch failed",
-        details: String(err?.message ?? err),
-      },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: err?.message ?? "Unknown error" }, { status: 500 });
   }
 }

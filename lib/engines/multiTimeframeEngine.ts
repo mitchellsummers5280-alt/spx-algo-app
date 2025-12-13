@@ -1,7 +1,7 @@
 // lib/engines/multiTimeframeEngine.ts
 
-import { useCandleStore, Candle, TimeframeId } from "lib/store/candleStore";
-import { computeSweepFlags } from "lib/engines/sweepDetector";
+import { useCandleStore, Candle, TimeframeId } from "@/lib/store/candleStore";
+import { computeSweepFlags } from "@/lib/engines/sweepDetector";
 
 export interface MultiTimeframeState {
   primaryTimeframe: TimeframeId;

@@ -1,6 +1,6 @@
 // lib/engines/multiTimeframeEngine.ts
 
-import { useCandleStore, Candle, TimeframeId } from "lib/store/candleStore";
+import { useCandleStore, Candle, TimeframeId } from "@/lib/store/candleStore";
 
 export interface MultiTimeframeState {
   primaryTimeframe: TimeframeId;

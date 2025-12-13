@@ -3,7 +3,7 @@
 
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import type { Trade, TradeDirection } from "lib/journal/journalTypes";
+import type { Trade, TradeDirection } from "@/lib/journal/journalTypes";
 
 interface JournalState {
   trades: Trade[];

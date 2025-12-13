@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect } from "react";
-import { useSpiceStore } from "lib/store/spiceStore";
-import { useCandleStore } from "lib/store/candleStore";
+import { useSpiceStore } from "@/lib/store/spiceStore";
+import { useCandleStore } from "@/lib/store/candleStore";
 
 export default function LivePrice() {
   const price = useSpiceStore((s) => s.price);

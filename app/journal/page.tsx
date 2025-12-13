@@ -2,7 +2,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useJournalStore } from "lib/store/journalStore";
+import { useJournalStore } from "@/lib/store/journalStore";
 
 function formatDate(ms: number | undefined) {
   if (!ms) return "-";

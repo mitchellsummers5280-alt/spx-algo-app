@@ -3,7 +3,7 @@
 import { useSpiceStore } from "../store/spiceStore";
 import { evaluateExit, type ExitDecision } from "../engines/exitEngine";
 import type { LiveTrade } from "../tradeTypes";
-import { computeMultiTimeframeState } from "lib/engines/multiTimeframeEngine";
+import { computeMultiTimeframeState } from "@/lib/engines/multiTimeframeEngine";
 
 import {
   runEntryEngine,

@@ -5,7 +5,7 @@ import { useEffect, useRef } from "react";
 import { useSpiceStore } from "@/lib/store/spiceStore";
 import { useCandleStore } from "@/lib/store/candleStore";
 
-type Candle = {
+type ApiCandle = {
   t: number;
   o: number;
   h: number;
@@ -24,7 +24,6 @@ export function usePolygonLive() {
   useEffect(() => {
     let cancelled = false;
 
-    // 1) FAST: price (smooth UI)
     const fetchPrice = async () => {
       try {
         const res = await fetch("/api/spx/price", { cache: "no-store" });
@@ -40,14 +39,11 @@ export function usePolygonLive() {
             ? data.last
             : null;
 
-        if (p == null || cancelled) return;
+        if (cancelled || p == null) return;
 
-        // avoid pointless rerenders if unchanged
         if (lastPriceRef.current !== p) {
           lastPriceRef.current = p;
           setPrice(p);
-
-          // build candles locally from “ticks”
           updateFromTick(p, Date.now());
         }
       } catch {
@@ -55,16 +51,15 @@ export function usePolygonLive() {
       }
     };
 
-    // 2) SLOW: seed 1m candle history occasionally
     const fetchCandles = async () => {
       try {
         const res = await fetch("/api/polygon/candles", { cache: "no-store" });
         if (!res.ok) return;
-        const data = (await res.json()) as { candles?: Candle[] };
+
+        const data = (await res.json()) as { candles?: ApiCandle[] };
         if (cancelled) return;
 
         if (Array.isArray(data.candles) && data.candles.length > 0) {
-          // seed into candle store as CLOSED candles (1m)
           seedHistory(
             "1m",
             data.candles.map((c) => ({
@@ -82,12 +77,11 @@ export function usePolygonLive() {
       }
     };
 
-    // start immediately
     fetchPrice();
     fetchCandles();
 
-    const priceId = setInterval(fetchPrice, 500);     // smooth
-    const candleId = setInterval(fetchCandles, 30_000); // cheap
+    const priceId = setInterval(fetchPrice, 500);
+    const candleId = setInterval(fetchCandles, 30_000);
 
     return () => {
       cancelled = true;

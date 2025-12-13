@@ -1,6 +1,6 @@
 // lib/engines/sweepDetector.ts
 
-import type { Candle } from "lib/store/candleStore";
+import type { Candle } from "@/lib/store/candleStore";
 
 export interface SessionLevels {
   asiaHigh?: number | null;
