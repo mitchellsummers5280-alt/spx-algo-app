@@ -30,14 +30,20 @@ export interface AggregatorContext {
 
   // session + bias flags
   session: string | null;
+
+  // ✅ NY session window (Step 4.1)
+  isNYSession?: boolean;
+
   twentyEmaAboveTwoHundred?: boolean | null;
   atAllTimeHigh?: boolean | null;
 
   // sweeps
-  sweptAsiaHigh?: boolean;
-  sweptAsiaLow?: boolean;
-  sweptLondonHigh?: boolean;
-  sweptLondonLow?: boolean;
+  sweptAsiaHigh: boolean;
+  sweptAsiaLow: boolean;
+  sweptLondonHigh: boolean;
+  sweptLondonLow: boolean;
+  sweptNYHigh: boolean;
+  sweptNYLow: boolean;
 
   // news toggle
   newsImpactOn: boolean;

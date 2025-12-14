@@ -48,27 +48,38 @@ export function runAggregator(
     if (ctx.twentyEmaAboveTwoHundred == null) blockedBy.push("trend flag undefined (20>200)");
     if (ctx.atAllTimeHigh == null) blockedBy.push("ATH flag undefined");
 
+    // ✅ Include NY sweeps too
     const anySweep =
       !!ctx.sweptAsiaHigh ||
       !!ctx.sweptAsiaLow ||
       !!ctx.sweptLondonHigh ||
-      !!ctx.sweptLondonLow;
+      !!ctx.sweptLondonLow ||
+      !!ctx.sweptNYHigh ||
+      !!ctx.sweptNYLow;
+
     if (!anySweep) blockedBy.push("no sweep flags true");
 
     if (!entry?.shouldEnter) blockedBy.push("entryEngine.shouldEnter=false");
 
+    // ✅ Publish full trace (include NY fields so debug JSON can show them)
     useEngineStore.getState().setEntryWhyNot({
       ts: Date.now(),
       evaluated: true,
       price: ctx.price ?? undefined,
       hasOpenTrade: !!ctx.hasOpenTrade,
       blockedBy,
+
       twentyEmaAboveTwoHundred: ctx.twentyEmaAboveTwoHundred,
       atAllTimeHigh: ctx.atAllTimeHigh,
-      sweptAsiaHigh: ctx.sweptAsiaHigh,
-      sweptAsiaLow: ctx.sweptAsiaLow,
-      sweptLondonHigh: ctx.sweptLondonHigh,
-      sweptLondonLow: ctx.sweptLondonLow,
+
+      sweptAsiaHigh: !!ctx.sweptAsiaHigh,
+      sweptAsiaLow: !!ctx.sweptAsiaLow,
+      sweptLondonHigh: !!ctx.sweptLondonHigh,
+      sweptLondonLow: !!ctx.sweptLondonLow,
+
+      // ✅ NEW
+      sweptNYHigh: !!ctx.sweptNYHigh,
+      sweptNYLow: !!ctx.sweptNYLow,
     });
 
     if (process.env.NODE_ENV === "development") {
@@ -84,7 +95,7 @@ export function runAggregator(
         evaluated: false,
         blockedBy: ["entryEngine threw error (see console)"],
       });
-    } catch {}
+    } catch { }
   }
 
   // 1) If no valid price, stay idle (but we already computed entryDecision)
@@ -110,51 +121,60 @@ export function runAggregator(
     exitSignal = getExitSignal(ctx, bias, notes);
   }
 
-  // 5) Structured exitDecision using LiveTrade + current context
+  // 5) Structured exitDecision (Exit Engine reads liveTrade from store)
   let exitDecision: ExitDecision | null = null;
 
   try {
     const state = useSpiceStore.getState();
     const liveTrade: LiveTrade | null = (state as any).liveTrade ?? null;
 
+    // Only evaluate exits when there’s an open trade
     if (liveTrade && (liveTrade as any).isOpen) {
-      exitDecision = evaluateExit(
-        {
-          market: {
-            price,
-            ema20: undefined,
-            ema200: undefined,
-          },
-          trade: liveTrade,
-        } as any
-      );
+      const exitCtx = {
+        ...ctx,
+        nowMs: Date.now(), // deterministic-ish; exitEngine will use ctx.nowMs if present
+      } as any;
+
+      exitDecision = evaluateExit(exitCtx);
     }
   } catch (err) {
     console.error("[SPICE] Error computing exitDecision:", err);
   }
 
-  // 6) 🔥 Open a live trade when entryDecision says YES
+  // 6) 🔥 Open a live trade when entryDecision says YES (with cooldown)
   try {
+    const stateNow: any = useSpiceStore.getState();
+    const lastExitTime = stateNow.lastExitTime ?? 0;
+    const COOLDOWN_MS = 30 * 1000;
+
+    const nowMs = (ctx as any)?.nowMs ?? Date.now();
+    const inCooldown = nowMs - lastExitTime < COOLDOWN_MS;
+
+    if (inCooldown) {
+      notes.push(
+        `Cooldown active (${Math.max(
+          0,
+          Math.ceil((COOLDOWN_MS - (nowMs - lastExitTime)) / 1000)
+        )}s left) — skipping entry.`
+      );
+    }
+
     if (
       entryDecision &&
       entryDecision.shouldEnter &&
       !ctx.hasOpenTrade &&
+      !inCooldown &&
       price != null
     ) {
-      console.log(
-        "[SPICE] Opening live trade from entry engine:",
-        entryDecision
-      );
+      console.log("[SPICE] Opening live trade from entry engine:", entryDecision);
 
       useSpiceStore.setState((state: any) => {
         const newTrade: any = {
           ...(state.liveTrade ?? {}),
-          id:
-            state.liveTrade?.id ??
-            `spice-trade-${Date.now().toString(36)}`,
+          id: state.liveTrade?.id ?? `spice-trade-${nowMs.toString(36)}`,
           direction: entryDecision.direction ?? null,
           entryPrice: price,
-          entryTime: Date.now(),
+          entryTime: nowMs,
           isOpen: true,
         };
 
@@ -171,18 +191,18 @@ export function runAggregator(
     console.error("[SPICE] Error opening live trade from entryDecision:", err);
   }
 
-  // 7) 🔥 Close the live trade when exitDecision says to exit
+  // 7) 🔥 Close the live trade when exitDecision says to exit (and record lastExitTime)
   try {
     if (exitDecision && ctx.hasOpenTrade && price != null) {
       const ed: any = exitDecision as any;
 
       const shouldClose =
-        ed.shouldExit === true ||
-        ed.action === "close" ||
-        ed.action === "exit";
+        ed.shouldExit === true || ed.action === "close" || ed.action === "exit";
 
       if (shouldClose) {
         console.log("[SPICE] Closing live trade from exit engine:", ed);
+
+        const nowMs = (ctx as any)?.nowMs ?? Date.now();
 
         useSpiceStore.setState((state: any) => {
           if (!state.liveTrade) return state;
@@ -191,17 +211,15 @@ export function runAggregator(
             ...state.liveTrade,
             isOpen: false,
             exitPrice: price,
-            exitTime: Date.now(),
-            exitReason:
-              ed.reason ??
-              ed.label ??
-              "Exit engine requested close.",
+            exitTime: nowMs,
+            exitReason: ed.reason ?? ed.label ?? "Exit engine requested close.",
           };
 
           return {
             ...state,
             hasOpenTrade: false,
             liveTrade: updatedTrade,
+            lastExitTime: nowMs, // ✅ cooldown anchor
           } as any;
         });
 

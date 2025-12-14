@@ -16,8 +16,8 @@ export interface SweepFlags {
   sweptAsiaLow: boolean;
   sweptLondonHigh: boolean;
   sweptLondonLow: boolean;
-  sweptNyHigh: boolean;
-  sweptNyLow: boolean;
+  sweptNYHigh: boolean;
+  sweptNYLow: boolean;
 }
 
 /**
@@ -89,7 +89,7 @@ export function computeSweepFlags(
     sweptAsiaLow: detectLowSweep(levels.asiaLow ?? null, candles),
     sweptLondonHigh: detectHighSweep(levels.londonHigh ?? null, candles),
     sweptLondonLow: detectLowSweep(levels.londonLow ?? null, candles),
-    sweptNyHigh: detectHighSweep(levels.nyHigh ?? null, candles),
-    sweptNyLow: detectLowSweep(levels.nyLow ?? null, candles),
+    sweptNYHigh: detectHighSweep(levels.nyHigh ?? null, candles),
+    sweptNYLow: detectLowSweep(levels.nyLow ?? null, candles),
   };
 }

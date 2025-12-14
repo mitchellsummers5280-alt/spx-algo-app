@@ -38,6 +38,14 @@ function makeDecision(
  * Core ENTRY LOGIC
  */
 export function runEntryEngine(ctx: AggregatorContext): EntryDecision {
+  // ✅ Step 4.1: Only allow entries during NY session window
+  if (ctx.isNYSession === false) {
+    return makeDecision(false, undefined, "Outside NY session window", {
+      blockedBy: ["outside ny window"],
+      isNYSession: ctx.isNYSession,
+    });
+  }
+
   // Basic sanity: if we don't have a price, never enter
   if (ctx.price == null || Number.isNaN(ctx.price)) {
     return makeDecision(false, undefined, "No valid price", {
@@ -47,9 +55,27 @@ export function runEntryEngine(ctx: AggregatorContext): EntryDecision {
   }
 
   const bias = getBias(ctx);
+  // ✅ Step 4.2: Trend filter (must have explicit EMA alignment)
+  if (ctx.twentyEmaAboveTwoHundred == null) {
+    return makeDecision(false, undefined, "Trend filter: EMAs not ready", {
+      price: ctx.price,
+      bias,
+      twentyEmaAboveTwoHundred: ctx.twentyEmaAboveTwoHundred,
+      blockedBy: ["trend filter (ema alignment missing)"],
+    });
+  }
 
-  const sweptAnyLow = !!(ctx.sweptAsiaLow || ctx.sweptLondonLow);
-  const sweptAnyHigh = !!(ctx.sweptAsiaHigh || ctx.sweptLondonHigh);
+  const sweptAnyLow = !!(
+    ctx.sweptAsiaLow ||
+    ctx.sweptLondonLow ||
+    ctx.sweptNYLow
+  );
+
+  const sweptAnyHigh = !!(
+    ctx.sweptAsiaHigh ||
+    ctx.sweptLondonHigh ||
+    ctx.sweptNYHigh
+  );
 
   // ✅ PHASE 2 VALIDATION: core snapshot
   const baseDebug = {
@@ -61,6 +87,8 @@ export function runEntryEngine(ctx: AggregatorContext): EntryDecision {
     sweptAsiaLow: ctx.sweptAsiaLow,
     sweptLondonHigh: ctx.sweptLondonHigh,
     sweptLondonLow: ctx.sweptLondonLow,
+    sweptNYHigh: !!ctx.sweptNYHigh,
+    sweptNYLow: !!ctx.sweptNYLow,
     sweptAnyLow,
     sweptAnyHigh,
   };
@@ -98,7 +126,7 @@ export function runEntryEngine(ctx: AggregatorContext): EntryDecision {
     }
 
     // No valid bullish setup
-    return makeDecision(false, "CALL", "No bullish setup", {
+    return makeDecision(false, undefined, "No bullish setup", {
       ...baseDebug,
       blockedBy: [
         !sweptAnyLow ? "no low sweep" : null,
@@ -132,7 +160,7 @@ export function runEntryEngine(ctx: AggregatorContext): EntryDecision {
     }
 
     // No valid bearish setup
-    return makeDecision(false, "PUT", "No bearish setup", {
+    return makeDecision(false, undefined, "No bearish setup", {
       ...baseDebug,
       blockedBy: [
         !sweptAnyHigh ? "no high sweep" : null,

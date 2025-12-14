@@ -13,8 +13,8 @@ export interface MultiTimeframeState {
   sweptAsiaLow: boolean;
   sweptLondonHigh: boolean;
   sweptLondonLow: boolean;
-  sweptNyHigh: boolean;
-  sweptNyLow: boolean;
+  sweptNYHigh: boolean;
+  sweptNYLow: boolean;
 }
 
 function ema(values: number[], period: number): number | null {
@@ -117,7 +117,7 @@ export function computeMultiTimeframeState(
     sweptAsiaLow: sweepFlags.sweptAsiaLow,
     sweptLondonHigh: sweepFlags.sweptLondonHigh,
     sweptLondonLow: sweepFlags.sweptLondonLow,
-    sweptNyHigh: sweepFlags.sweptNyHigh,
-    sweptNyLow: sweepFlags.sweptNyLow,
+    sweptNYHigh: sweepFlags.sweptNYHigh,
+    sweptNYLow: sweepFlags.sweptNYLow,
   };
 }

@@ -41,6 +41,8 @@ export type EntryWhyNot = {
   sweptAsiaLow?: boolean;
   sweptLondonHigh?: boolean;
   sweptLondonLow?: boolean;
+  sweptNYHigh: boolean;
+  sweptNYLow: boolean;
 
   blockedBy?: string[];
 };

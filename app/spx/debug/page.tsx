@@ -47,9 +47,9 @@ function computeEMAFromCandles(candles: any[] | undefined, length: number) {
 }
 
 export default function Page() {
-  // keep SPICE engine running
+  // keep SPICE engine running (single instance)
   usePolygonLive();
-  useSpiceEngine();
+  const { etTime, isNYSession } = useSpiceEngine();
 
   // 🔹 core SPICE state
   const price = useSpiceStore((s) => s.price);
@@ -66,8 +66,8 @@ export default function Page() {
   const sweptAsiaLow = useSpiceStore((s) => s.sweptAsiaLow);
   const sweptLondonHigh = useSpiceStore((s) => s.sweptLondonHigh);
   const sweptLondonLow = useSpiceStore((s) => s.sweptLondonLow);
-  const sweptNyHigh = useSpiceStore((s) => (s as any).sweptNyHigh);
-  const sweptNyLow = useSpiceStore((s) => (s as any).sweptNyLow);
+  const sweptNYHigh = useSpiceStore((s) => (s as any).sweptNYHigh);
+  const sweptNYLow = useSpiceStore((s) => (s as any).sweptNYLow);
 
   const asiaHigh = useSpiceStore((s) => (s as any).asiaHigh);
   const asiaLow = useSpiceStore((s) => (s as any).asiaLow);
@@ -127,8 +127,8 @@ export default function Page() {
       entryDecision.direction === "CALL"
         ? "LONG (CALL)"
         : entryDecision.direction === "PUT"
-        ? "SHORT (PUT)"
-        : "NONE";
+          ? "SHORT (PUT)"
+          : "NONE";
 
     return {
       label: `Decision: ${entryDecision.shouldEnter ? dir : "NO-TRADE"}`,
@@ -150,8 +150,8 @@ export default function Page() {
       sweptAsiaLow: false,
       sweptLondonHigh: false,
       sweptLondonLow: false,
-      sweptNyHigh: false,
-      sweptNyLow: false,
+      sweptNYHigh: false,
+      sweptNYLow: false,
     } as any);
   };
 
@@ -175,9 +175,9 @@ export default function Page() {
     if (which === "asiaLow")
       useSpiceStore.setState({ sweptAsiaLow: true } as any);
     if (which === "nyHigh")
-      useSpiceStore.setState({ sweptNyHigh: true } as any);
+      useSpiceStore.setState({ sweptNYHigh: true } as any);
     if (which === "nyLow")
-      useSpiceStore.setState({ sweptNyLow: true } as any);
+      useSpiceStore.setState({ sweptNYLow: true } as any);
   };
 
   const setTrend = (bull: boolean) => {
@@ -279,111 +279,179 @@ export default function Page() {
             </span>
           </div>
 
-          {/* ✅ quick trend/session/ATH toggles */}
+          {/* ✅ quick trend / session / ATH toggles */}
           <div className="mt-3 flex flex-wrap gap-2">
+            <div className="rounded-xl border border-zinc-800 bg-zinc-950/60 p-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-sm font-semibold text-zinc-100">Session</div>
+
+                  <div className="mt-0.5 text-xs text-zinc-400">
+                    Current:{" "}
+                    <span className="text-zinc-200">
+                      {String(session ?? "UNKNOWN")}
+                    </span>
+                  </div>
+
+                  {/* ET + NY window */}
+                  <div className="mt-1 flex items-center gap-2 text-[11px]">
+                    <span className="text-zinc-400">ET:</span>
+                    <span className="text-zinc-100">{etTime || "…"}</span>
+
+                    <span
+                      className={
+                        isNYSession
+                          ? "ml-2 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] uppercase text-emerald-400"
+                          : "ml-2 rounded-full bg-zinc-800 px-2 py-0.5 text-[10px] uppercase text-zinc-300"
+                      }
+                    >
+                      {isNYSession ? "NY WINDOW" : "OFF HOURS"}
+                    </span>
+
+                    <span className="ml-1 text-[10px] text-zinc-500">
+                      09:30–11:30 ET
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    className="rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-1.5 text-xs text-zinc-200 hover:bg-zinc-900"
+                    onClick={() =>
+                      useSpiceStore.setState({ session: "asia" } as any)
+                    }
+                  >
+                    Force Asia
+                  </button>
+
+                  <button
+                    type="button"
+                    className="rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-1.5 text-xs text-zinc-200 hover:bg-zinc-900"
+                    onClick={() =>
+                      useSpiceStore.setState({ session: "london" } as any)
+                    }
+                  >
+                    Force London
+                  </button>
+
+                  <button
+                    type="button"
+                    className="rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-1.5 text-xs text-zinc-200 hover:bg-zinc-900"
+                    onClick={() =>
+                      useSpiceStore.setState({ session: "new-york" } as any)
+                    }
+                  >
+                    Force New York
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* DEBUG: trend + ATH overrides */}
+          <div className="mt-2 flex flex-wrap gap-2">
             <button
-              className="rounded-lg border border-zinc-700 bg-black/40 px-2 py-1 text-[11px] text-zinc-200 hover:bg-zinc-900/40"
+              type="button"
+              className="rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-1.5 text-xs text-zinc-200 hover:bg-zinc-900"
               onClick={() => setTrend(true)}
             >
-              Force Trend Bull (20&gt;200)
+              Force Bull (20 &gt; 200)
             </button>
+
             <button
-              className="rounded-lg border border-zinc-700 bg-black/40 px-2 py-1 text-[11px] text-zinc-200 hover:bg-zinc-900/40"
+              type="button"
+              className="rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-1.5 text-xs text-zinc-200 hover:bg-zinc-900"
               onClick={() => setTrend(false)}
             >
-              Force Trend Bear (20&lt;200)
+              Force Bear (20 &lt; 200)
             </button>
+
             <button
-              className="rounded-lg border border-zinc-700 bg-black/40 px-2 py-1 text-[11px] text-zinc-200 hover:bg-zinc-900/40"
-              onClick={() => setSession("new-york")}
-            >
-              Force Session: New York
-            </button>
-            <button
-              className="rounded-lg border border-zinc-700 bg-black/40 px-2 py-1 text-[11px] text-zinc-200 hover:bg-zinc-900/40"
+              type="button"
+              className="rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-1.5 text-xs text-zinc-200 hover:bg-zinc-900"
               onClick={toggleATH}
             >
               Toggle ATH
             </button>
           </div>
-        </div>
 
-        {/* Liquidity & extremes */}
-        <div className="rounded-2xl border border-zinc-800 bg-zinc-950/70 p-4">
-          <div className="flex items-center justify-between">
-            <span className="text-xs uppercase text-zinc-400">
-              Liquidity & Extremes
-            </span>
-            <span className="text-[10px] uppercase text-zinc-500">
-              {atAllTimeHigh ? "At/near ATH" : "Below ATH"}
-            </span>
-          </div>
 
-          <div className="mt-3 space-y-1 text-[11px]">
-            <div>
-              Asia:{" "}
-              <span
-                className={
-                  sweptAsiaHigh
-                    ? "rounded-full bg-emerald-500/10 px-2 py-0.5 text-emerald-400"
-                    : "rounded-full bg-zinc-800 px-2 py-0.5 text-zinc-300"
-                }
-              >
-                High
-              </span>{" "}
-              <span
-                className={
-                  sweptAsiaLow
-                    ? "rounded-full bg-emerald-500/10 px-2 py-0.5 text-emerald-400"
-                    : "rounded-full bg-zinc-800 px-2 py-0.5 text-zinc-300"
-                }
-              >
-                Low
+          {/* Liquidity & extremes */}
+          <div className="rounded-2xl border border-zinc-800 bg-zinc-950/70 p-4">
+            <div className="flex items-center justify-between">
+              <span className="text-xs uppercase text-zinc-400">Liquidity & Extremes</span>
+              <span className="text-[10px] uppercase text-zinc-500">
+                {atAllTimeHigh ? "At/near ATH" : "Below ATH"}
               </span>
             </div>
 
-            <div>
-              London:{" "}
-              <span
-                className={
-                  sweptLondonHigh
-                    ? "rounded-full bg-emerald-500/10 px-2 py-0.5 text-emerald-400"
-                    : "rounded-full bg-zinc-800 px-2 py-0.5 text-zinc-300"
-                }
-              >
-                High
-              </span>{" "}
-              <span
-                className={
-                  sweptLondonLow
-                    ? "rounded-full bg-emerald-500/10 px-2 py-0.5 text-emerald-400"
-                    : "rounded-full bg-zinc-800 px-2 py-0.5 text-zinc-300"
-                }
-              >
-                Low
-              </span>
-            </div>
+            <div className="mt-3 space-y-1 text-[11px]">
+              <div>
+                Asia:{" "}
+                <span
+                  className={
+                    sweptAsiaHigh
+                      ? "rounded-full bg-emerald-500/10 px-2 py-0.5 text-emerald-400"
+                      : "rounded-full bg-zinc-800 px-2 py-0.5 text-zinc-300"
+                  }
+                >
+                  High
+                </span>{" "}
+                <span
+                  className={
+                    sweptAsiaLow
+                      ? "rounded-full bg-emerald-500/10 px-2 py-0.5 text-emerald-400"
+                      : "rounded-full bg-zinc-800 px-2 py-0.5 text-zinc-300"
+                  }
+                >
+                  Low
+                </span>
+              </div>
 
-            <div>
-              New York:{" "}
-              <span
-                className={
-                  sweptNyHigh
-                    ? "rounded-full bg-emerald-500/10 px-2 py-0.5 text-emerald-400"
-                    : "rounded-full bg-zinc-800 px-2 py-0.5 text-zinc-300"
-                }
-              >
-                High
-              </span>{" "}
-              <span
-                className={
-                  sweptNyLow
-                    ? "rounded-full bg-emerald-500/10 px-2 py-0.5 text-emerald-400"
-                    : "rounded-full bg-zinc-800 px-2 py-0.5 text-zinc-300"
-                }
-              >
-                Low
-              </span>
+              <div>
+                London:{" "}
+                <span
+                  className={
+                    sweptLondonHigh
+                      ? "rounded-full bg-emerald-500/10 px-2 py-0.5 text-emerald-400"
+                      : "rounded-full bg-zinc-800 px-2 py-0.5 text-zinc-300"
+                  }
+                >
+                  High
+                </span>{" "}
+                <span
+                  className={
+                    sweptLondonLow
+                      ? "rounded-full bg-emerald-500/10 px-2 py-0.5 text-emerald-400"
+                      : "rounded-full bg-zinc-800 px-2 py-0.5 text-zinc-300"
+                  }
+                >
+                  Low
+                </span>
+              </div>
+
+              <div>
+                New York:{" "}
+                <span
+                  className={
+                    sweptNYHigh
+                      ? "rounded-full bg-emerald-500/10 px-2 py-0.5 text-emerald-400"
+                      : "rounded-full bg-zinc-800 px-2 py-0.5 text-zinc-300"
+                  }
+                >
+                  High
+                </span>{" "}
+                <span
+                  className={
+                    sweptNYLow
+                      ? "rounded-full bg-emerald-500/10 px-2 py-0.5 text-emerald-400"
+                      : "rounded-full bg-zinc-800 px-2 py-0.5 text-zinc-300"
+                  }
+                >
+                  Low
+                </span>
+              </div>
             </div>
           </div>
 
@@ -418,6 +486,19 @@ export default function Page() {
               onClick={clearSweeps}
             >
               Clear Sweeps
+            </button>
+
+            <button
+              className="rounded-lg border border-zinc-700 bg-black/40 px-2 py-1 text-[11px] text-zinc-200 hover:bg-zinc-900/40"
+              onClick={() => forceSweep("nyHigh")}
+            >
+              Force NY High Sweep
+            </button>
+            <button
+              className="rounded-lg border border-zinc-700 bg-black/40 px-2 py-1 text-[11px] text-zinc-200 hover:bg-zinc-900/40"
+              onClick={() => forceSweep("nyLow")}
+            >
+              Force NY Low Sweep
             </button>
 
             {/* ✅ NEW: RESET TRADE (unsticks “already in trade”) */}
@@ -461,6 +542,78 @@ export default function Page() {
             </pre>
           )}
 
+          {entryDecision?.debug && (
+            <div className="mt-3 grid grid-cols-2 gap-2 text-[12px]">
+              <div className="rounded-lg border border-zinc-800 bg-black/30 p-2">
+                <div className="text-zinc-400">Bias</div>
+                <div className="text-zinc-200">
+                  {entryDecision.debug.bias ?? "—"}
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-zinc-800 bg-black/30 p-2">
+                <div className="text-zinc-400">Trend (20 &gt; 200)</div>
+                <div className="text-zinc-200">
+                  {String(entryDecision.debug.twentyEmaAboveTwoHundred ?? "—")}
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-zinc-800 bg-black/30 p-2">
+                <div className="text-zinc-400">ATH Context</div>
+                <div className="text-zinc-200">
+                  {String(entryDecision.debug.atAllTimeHigh ?? "—")}
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-zinc-800 bg-black/30 p-2">
+                <div className="text-zinc-400">Session Sweep</div>
+                <div className="text-zinc-200">
+                  {entryDecision.debug.sweptNYHigh
+                    ? "NY High"
+                    : entryDecision.debug.sweptNYLow
+                      ? "NY Low"
+                      : entryDecision.debug.sweptLondonHigh
+                        ? "London High"
+                        : entryDecision.debug.sweptLondonLow
+                          ? "London Low"
+                          : entryDecision.debug.sweptAsiaHigh
+                            ? "Asia High"
+                            : entryDecision.debug.sweptAsiaLow
+                              ? "Asia Low"
+                              : "None"}
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div className="mt-3 grid grid-cols-2 gap-2 text-[12px]">
+            <div className="rounded-xl border border-zinc-800 bg-black/30 p-2">
+              <div className="text-zinc-400">Bias</div>
+              <div className="text-zinc-200">{entryDecision?.debug?.bias ?? "—"}</div>
+            </div>
+
+            <div className="rounded-xl border border-zinc-800 bg-black/30 p-2">
+              <div className="text-zinc-400">Trend (20&gt;200)</div>
+              <div className="text-zinc-200">
+                {String(entryDecision?.debug?.twentyEmaAboveTwoHundred ?? "—")}
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-zinc-800 bg-black/30 p-2">
+              <div className="text-zinc-400">NY High Sweep</div>
+              <div className="text-zinc-200">
+                {String(entryDecision?.debug?.sweptNYHigh ?? "—")}
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-zinc-800 bg-black/30 p-2">
+              <div className="text-zinc-400">NY Low Sweep</div>
+              <div className="text-zinc-200">
+                {String(entryDecision?.debug?.sweptNYLow ?? "—")}
+              </div>
+            </div>
+          </div>
+
           {/* ✅ PHASE 2 VALIDATION: why no trade */}
           <div className="mt-4 rounded-xl border border-zinc-800 bg-black/30 p-3">
             <div className="flex items-center justify-between">
@@ -499,11 +652,10 @@ export default function Page() {
                 Current Trade
               </span>
               <span
-                className={`rounded-full px-2 py-0.5 text-[10px] uppercase ${
-                  hasOpenTrade
-                    ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/60"
-                    : "bg-zinc-800 text-zinc-300 border border-zinc-700/60"
-                }`}
+                className={`rounded-full px-2 py-0.5 text-[10px] uppercase ${hasOpenTrade
+                  ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/60"
+                  : "bg-zinc-800 text-zinc-300 border border-zinc-700/60"
+                  }`}
               >
                 {hasOpenTrade ? "Open" : "Flat"}
               </span>
@@ -731,7 +883,7 @@ export default function Page() {
 
             const direction =
               entryDecision?.direction === "CALL" ||
-              entryDecision?.direction === "PUT"
+                entryDecision?.direction === "PUT"
                 ? entryDecision.direction
                 : "CALL";
 
@@ -741,9 +893,8 @@ export default function Page() {
               contracts: 1,
               setupTag: entryDecision?.reason ?? "UNKNOWN",
               sessionTag: session ?? "UNKNOWN",
-              thesis: `SPICE Entry — ${
-                entryDecision?.reason ?? "no reason detected"
-              }`,
+              thesis: `SPICE Entry — ${entryDecision?.reason ?? "no reason detected"
+                }`,
             });
           }}
         >
