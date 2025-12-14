@@ -5,15 +5,21 @@ import { useSpiceStore } from "../store/spiceStore";
 import type { ExitDecision as StoreExitDecision } from "../store/spiceStore";
 
 /**
- * Re-export ExitDecision so existing type imports continue to work.
+ * Re-export ExitDecision so existing type imports
+ * like `import type { ExitDecision } from "../engines/exitEngine";`
+ * continue to work.
  */
 export type ExitDecision = StoreExitDecision;
 
 // ---- Basic exit parameters (tweak these later as needed) ----
 const TAKE_PROFIT_POINTS = 5; // +5 points in your favor
 const STOP_LOSS_POINTS = -3; // -3 points against you (pnlPoints <= -3)
+
+// ✅ IMPORTANT: put this back to 15m for real trading.
+// Leave 10s only for testing.
 const MAX_TRADE_DURATION_MS = 10 * 1000; // 10 seconds (test)
 
+/** Helper to normalize return */
 function makeDecision(shouldExit: boolean, reason?: string): ExitDecision {
   return { shouldExit, reason };
 }
@@ -24,11 +30,13 @@ function makeDecision(shouldExit: boolean, reason?: string): ExitDecision {
  * Uses:
  * - current price (ctx.price)
  * - current liveTrade from store
+ * - trend flag (ctx.twentyEmaAboveTwoHundred) for bias-flip exit
  *
  * Exit when:
- * - out of session (if ctx.inNySession is provided and false)
+ * - session ended (if ctx.isNYSession is provided and false)
  * - P/L >= TAKE_PROFIT_POINTS
  * - P/L <= STOP_LOSS_POINTS
+ * - Trend flips against position (Option B v2)
  * - Trade duration exceeds MAX_TRADE_DURATION_MS
  */
 export function runExitEngine(ctx: AggregatorContext): ExitDecision {
@@ -37,15 +45,15 @@ export function runExitEngine(ctx: AggregatorContext): ExitDecision {
   // No live trade → nothing to exit.
   if (!liveTrade) return makeDecision(false, "No open trade");
 
-  // If your context provides session gating, enforce it here.
-  // (Only triggers if you actually have ctx.inNySession defined.)
-  const inNySession = (ctx as any)?.inNySession;
-  if (inNySession === false) {
+  // Session gating (prefer ctx.isNYSession, fallback to older inNySession)
+  const isNYSession =
+    (ctx as any)?.isNYSession ?? (ctx as any)?.inNySession ?? undefined;
+
+  if (isNYSession === false) {
     return makeDecision(true, "Session ended (NY gate)");
   }
 
   // If price is missing or invalid, don't exit on this tick.
-  // Use == null to avoid treating 0 as falsy.
   if (ctx.price == null || Number.isNaN(ctx.price)) {
     return makeDecision(false, "No valid price");
   }
@@ -65,6 +73,21 @@ export function runExitEngine(ctx: AggregatorContext): ExitDecision {
   // ---- Stop Loss ----
   if (pnlPoints <= STOP_LOSS_POINTS) {
     return makeDecision(true, `Stop loss hit: ${pnlPoints.toFixed(2)} pts`);
+  }
+
+  // ---- Option B v2: Bias Flip Exit ----
+  // twentyEmaAboveTwoHundred: true=bullish, false=bearish, null/undefined=unknown
+  if (ctx.twentyEmaAboveTwoHundred != null) {
+    const bullish = ctx.twentyEmaAboveTwoHundred === true;
+    const bearish = ctx.twentyEmaAboveTwoHundred === false;
+
+    if (liveTrade.direction === "CALL" && bearish) {
+      return makeDecision(true, "Trend flipped bearish against CALL");
+    }
+
+    if (liveTrade.direction === "PUT" && bullish) {
+      return makeDecision(true, "Trend flipped bullish against PUT");
+    }
   }
 
   // ---- Max Time in Trade ----
