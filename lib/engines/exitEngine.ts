@@ -17,7 +17,7 @@ const STOP_LOSS_POINTS = -3; // -3 points against you (pnlPoints <= -3)
 
 // ✅ IMPORTANT: put this back to 15m for real trading.
 // Leave 10s only for testing.
-const MAX_TRADE_DURATION_MS = 10 * 1000; // 10 seconds (test)
+const MAX_TRADE_DURATION_MS = 15 * 60 * 1000; // 15 minutes
 
 /** Helper to normalize return */
 function makeDecision(shouldExit: boolean, reason?: string): ExitDecision {
@@ -92,10 +92,13 @@ export function runExitEngine(ctx: AggregatorContext): ExitDecision {
 
   // ---- Max Time in Trade ----
   const nowMs = (ctx as any)?.nowMs ?? Date.now();
-  const ageMs = nowMs - liveTrade.entryTime;
+  const entryTime = Number((liveTrade as any).entryTime);
 
-  if (ageMs >= MAX_TRADE_DURATION_MS) {
-    return makeDecision(true, "Max trade duration reached");
+  if (Number.isFinite(entryTime)) {
+    const ageMs = nowMs - entryTime;
+    if (ageMs >= MAX_TRADE_DURATION_MS) {
+      return makeDecision(true, "Max trade duration reached");
+    }
   }
 
   // No exit condition met

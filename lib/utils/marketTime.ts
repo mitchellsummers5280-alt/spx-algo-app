@@ -1,7 +1,7 @@
 // lib/utils/marketTime.ts
 export type SessionWindow = {
   startHHMM: string; // "09:30"
-  endHHMM: string;   // "23:59"
+  endHHMM: string;   // "11:30"
 };
 
 function hhmmToMinutes(hhmm: string) {
@@ -37,7 +37,7 @@ export function formatEtTime(now = new Date()) {
 
 export function inSessionWindow(
   minutesNow: number,
-  window: SessionWindow = { startHHMM: "09:30", endHHMM: "23:59" }
+  window: SessionWindow = { startHHMM: "09:30", endHHMM: "11:30" }
 ) {
   const start = hhmmToMinutes(window.startHHMM);
   const end = hhmmToMinutes(window.endHHMM);

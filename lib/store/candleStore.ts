@@ -24,7 +24,26 @@ const TIMEFRAME_MS: Record<TimeframeId, number> = {
   "4h": 4 * 60 * 60_000,
 };
 
-const MAX_CANDLES = 500;
+// ✅ IMPORTANT: 1m needs >= 24h (1440). Give buffer so Asia/London always exist.
+// Others can stay smaller.
+const MAX_BY_TF: Record<TimeframeId, number> = {
+  "1m": 3000,
+  "3m": 1200,
+  "5m": 1200,
+  "15m": 800,
+  "30m": 800,
+  "4h": 500,
+};
+
+function bucketStart(ts: number, tf: TimeframeId) {
+  const ms = TIMEFRAME_MS[tf];
+  return ts - (ts % ms);
+}
+
+function cap<T>(arr: T[], max: number) {
+  if (arr.length <= max) return arr;
+  return arr.slice(arr.length - max);
+}
 
 export interface CandleStoreState {
   // ✅ canonical storage
@@ -38,12 +57,14 @@ export interface CandleStoreState {
 
   /**
    * Seed historical candles from a REST call (Polygon aggregates).
+   * Ensures sorted ascending and:
+   * - all past candles closed=true
+   * - the latest candle is OPEN (closed=false) if it belongs to the current bucket
    */
   seedHistory: (tf: TimeframeId, raw: Candle[]) => void;
 
   /**
    * Compatibility alias for code that expects setCandles(tf, candles)
-   * (we route it to seedHistory semantics: sorted, capped, closed=true)
    */
   setCandles: (tf: TimeframeId, candles: Candle[]) => void;
 
@@ -67,7 +88,7 @@ export const useCandleStore = create<CandleStoreState>((set, get) => ({
     "4h": [],
   },
 
-  // alias points to the same object initially; we keep it synced in setters
+  // alias starts separate, but we always keep them identical on updates
   candlesByTf: {
     "1m": [],
     "3m": [],
@@ -88,25 +109,35 @@ export const useCandleStore = create<CandleStoreState>((set, get) => ({
 
   seedHistory: (tf, raw) =>
     set((state) => {
-      const cloned = [...raw]
-        .sort((a, b) => a.t - b.t)
-        .slice(-MAX_CANDLES)
-        .map((c) => ({ ...c, closed: true }));
+      const now = Date.now();
+      const curBucket = bucketStart(now, tf);
 
-      const nextCandles = {
+      // Normalize -> sort -> cap
+      const sorted = [...raw].sort((a, b) => a.t - b.t);
+      const trimmed = cap(sorted, MAX_BY_TF[tf]);
+
+      // Mark candles closed, but reopen the newest candle IF it is the current bucket
+      const cloned = trimmed.map((c) => ({ ...c, closed: true }));
+      const last = cloned[cloned.length - 1];
+
+      if (last && last.t === curBucket) {
+        // ✅ this allows updateFromTick to update the current minute / bucket candle
+        cloned[cloned.length - 1] = { ...last, closed: false };
+      }
+
+      const nextCandles: Record<TimeframeId, Candle[]> = {
         ...state.candles,
         [tf]: cloned,
       };
 
       return {
         candles: nextCandles,
-        candlesByTf: nextCandles, // keep alias synced
-        lastUpdatedByTf: { ...state.lastUpdatedByTf, [tf]: Date.now() },
+        candlesByTf: nextCandles,
+        lastUpdatedByTf: { ...state.lastUpdatedByTf, [tf]: now },
       };
     }),
 
   setCandles: (tf, candles) => {
-    // route to seedHistory behavior (closed=true, sorted, capped)
     get().seedHistory(tf, candles);
   },
 
@@ -120,57 +151,65 @@ export const useCandleStore = create<CandleStoreState>((set, get) => ({
       };
 
       (Object.keys(TIMEFRAME_MS) as TimeframeId[]).forEach((tf) => {
-        const tfMs = TIMEFRAME_MS[tf];
-        const bucketStart = now - (now % tfMs);
+        const b = bucketStart(now, tf);
         const candles = [...(updated[tf] ?? [])];
         const last = candles[candles.length - 1];
 
         if (!last) {
           candles.push({
-            t: bucketStart,
+            t: b,
             o: price,
             h: price,
             l: price,
             c: price,
             closed: false,
           });
-          updatedTs[tf] = Date.now();
-        } else if (last.t === bucketStart && !last.closed) {
-          const merged: Candle = {
-            ...last,
-            h: Math.max(last.h, price),
-            l: Math.min(last.l, price),
+          updatedTs[tf] = now;
+          updated[tf] = candles;
+          return;
+        }
+
+        // ✅ If we're still in the same bucket, ALWAYS update (even if it was incorrectly closed)
+        if (last.t === b) {
+          const reopened = last.closed ? { ...last, closed: false } : last;
+
+          candles[candles.length - 1] = {
+            ...reopened,
+            h: Math.max(reopened.h, price),
+            l: Math.min(reopened.l, price),
             c: price,
           };
-          candles[candles.length - 1] = merged;
-          updatedTs[tf] = Date.now();
-        } else if (bucketStart > last.t) {
-          const closedLast: Candle =
-            last.closed === true ? last : { ...last, closed: true };
 
-          candles[candles.length - 1] = closedLast;
+          updatedTs[tf] = now;
+          updated[tf] = cap(candles, MAX_BY_TF[tf]);
+          return;
+        }
+
+        // ✅ New bucket started: close last candle, start new open candle
+        if (b > last.t) {
+          candles[candles.length - 1] = last.closed ? last : { ...last, closed: true };
 
           candles.push({
-            t: bucketStart,
+            t: b,
             o: price,
             h: price,
             l: price,
             c: price,
             closed: false,
           });
-          updatedTs[tf] = Date.now();
+
+          updatedTs[tf] = now;
+          updated[tf] = cap(candles, MAX_BY_TF[tf]);
+          return;
         }
 
-        if (candles.length > MAX_CANDLES) {
-          candles.splice(0, candles.length - MAX_CANDLES);
-        }
-
-        updated[tf] = candles;
+        // If b < last.t (out-of-order tick), ignore to keep monotonic series
+        updated[tf] = cap(candles, MAX_BY_TF[tf]);
       });
 
       return {
         candles: updated,
-        candlesByTf: updated, // keep alias synced
+        candlesByTf: updated,
         lastUpdatedByTf: updatedTs,
       };
     });

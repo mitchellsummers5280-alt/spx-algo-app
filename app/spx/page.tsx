@@ -7,6 +7,8 @@ import { useSpiceEngine } from "@/lib/hooks/useSpiceEngine";
 
 import { useSpiceStore } from "@/lib/store/spiceStore";
 import { useCandleStore } from "@/lib/store/candleStore";
+import { useShallow } from "zustand/react/shallow";
+
 
 function formatTime(ms: number) {
   const d = new Date(ms);
@@ -109,16 +111,19 @@ export default function SpxDebugPage() {
   const session = useSpiceStore((s) => s.session);
   const hasOpenTrade = useSpiceStore((s) => s.hasOpenTrade);
 
-  const mte = useSpiceStore((s) => ({
-    twentyEmaAboveTwoHundred: s.twentyEmaAboveTwoHundred,
-    atAllTimeHigh: s.atAllTimeHigh,
-    sweptAsiaHigh: s.sweptAsiaHigh,
-    sweptAsiaLow: s.sweptAsiaLow,
-    sweptLondonHigh: s.sweptLondonHigh,
-    sweptLondonLow: s.sweptLondonLow,
-    sweptNYHigh: s.sweptNYHigh,
-    sweptNYLow: s.sweptNYLow,
-  }));
+  const mte = useSpiceStore(
+    useShallow((s) => ({
+      twentyEmaAboveTwoHundred: s.twentyEmaAboveTwoHundred,
+      atAllTimeHigh: s.atAllTimeHigh,
+      sweptAsiaHigh: s.sweptAsiaHigh,
+      sweptAsiaLow: s.sweptAsiaLow,
+      sweptLondonHigh: s.sweptLondonHigh,
+      sweptLondonLow: s.sweptLondonLow,
+      sweptNYHigh: s.sweptNYHigh,
+      sweptNYLow: s.sweptNYLow,
+    }))
+  );
+
 
   // ✅ read from CandleStore (single source of truth)
 

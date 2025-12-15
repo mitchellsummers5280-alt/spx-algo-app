@@ -5,6 +5,9 @@ import { useEffect, useRef } from "react";
 import { useSpiceStore } from "@/lib/store/spiceStore";
 import { useCandleStore } from "@/lib/store/candleStore";
 
+// ✅ use your session level engine (the one you pasted)
+import { buildSessionLevels } from "@/lib/engines/sessionLevelEngine";
+
 type ApiCandle = {
   t: number;
   o: number;
@@ -51,6 +54,36 @@ function aggregateToTf(raw1m: Candle[], tfMs: number): Candle[] {
   return out;
 }
 
+function pushSessionLevelsToSpiceStore(oneMin: Candle[]) {
+  try {
+    const prev = (useSpiceStore.getState() as any).sessionLevels;
+    const levels = buildSessionLevels(oneMin as any, prev);
+
+    // Save the whole object if your store supports it
+    const st: any = useSpiceStore.getState();
+    if (typeof st.setSessionLevels === "function") {
+      st.setSessionLevels(levels);
+    }
+
+    // ✅ ALSO write the exact primitive keys your debug page reads
+    // (so Asia/London populate instantly)
+    useSpiceStore.setState({
+      sessionLevels: levels,
+
+      asiaHigh: levels.asia?.high ?? null,
+      asiaLow: levels.asia?.low ?? null,
+
+      londonHigh: levels.london?.high ?? null,
+      londonLow: levels.london?.low ?? null,
+
+      nyHigh: levels.ny?.high ?? null,
+      nyLow: levels.ny?.low ?? null,
+    } as any);
+  } catch (err) {
+    console.error("[SPICE] pushSessionLevelsToSpiceStore error:", err);
+  }
+}
+
 export function usePolygonLive() {
   const setPrice = useSpiceStore((s) => s.setPrice);
 
@@ -65,7 +98,9 @@ export function usePolygonLive() {
 
     const fetchPrice = async () => {
       try {
-        const res = await fetch("/api/spx/price", { cache: "no-store" });
+        const res = await fetch("/api/polygon/candles?tf=1m&lookback=3d", {
+          cache: "no-store",
+        });
         if (!res.ok) return;
 
         const data = await res.json();
@@ -73,10 +108,10 @@ export function usePolygonLive() {
           typeof data === "number"
             ? data
             : typeof data?.price === "number"
-            ? data.price
-            : typeof data?.last === "number"
-            ? data.last
-            : null;
+              ? data.price
+              : typeof data?.last === "number"
+                ? data.last
+                : null;
 
         if (cancelled || p == null) return;
 
@@ -94,7 +129,9 @@ export function usePolygonLive() {
 
     const seedCandlesOnce = async () => {
       if (seededRef.current) return;
+
       try {
+        // Your route already fetches ~10 days; good for “last 24h includes last session”
         const res = await fetch("/api/polygon/candles", { cache: "no-store" });
         if (!res.ok) return;
 
@@ -121,6 +158,9 @@ export function usePolygonLive() {
           const fiveMin = aggregateToTf(oneMin, 5 * 60_000);
           seedHistory("5m", fiveMin);
 
+          // ✅ NEW: compute + push session levels into spiceStore keys used by /spx/debug
+          pushSessionLevelsToSpiceStore(oneMin);
+
           seededRef.current = true;
         }
       } catch {
@@ -133,7 +173,7 @@ export function usePolygonLive() {
     seedCandlesOnce();
 
     // live price polling
-    const priceId = setInterval(fetchPrice, 500);
+    const priceId = setInterval(fetchPrice, 2000);
 
     return () => {
       cancelled = true;

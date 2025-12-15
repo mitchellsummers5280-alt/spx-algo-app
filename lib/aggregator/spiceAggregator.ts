@@ -7,6 +7,10 @@ import type { LiveTrade } from "@/lib/tradeTypes";
 import { computeMultiTimeframeState } from "@/lib/engines/multiTimeframeEngine";
 import { runEntryEngine, type EntryDecision } from "@/lib/engines/entryEngine";
 
+// ✅ Session Level Engine
+import { buildSessionLevels } from "@/lib/engines/sessionLevelEngine";
+import { detectSweep } from "@/lib/engines/sessionSweep";
+
 import {
   AggregatorContext,
   EngineSnapshot,
@@ -29,58 +33,158 @@ export function runAggregator(
 ): EngineSnapshot {
   const notes: string[] = [];
 
-  // 0) Always run Entry Engine (structured decision)
+  // Grab store helpers (Option A pending-entry)
+  const storeNow: any = useSpiceStore.getState();
+  const pendingEntry = storeNow.pendingEntry as
+    | { direction: "long" | "short"; triggerTime: number }
+    | undefined;
+
+  // ================================
+  // 0) Session Level Engine (Asia / London / NY)
+  // Run BEFORE entry so entry can consume sweep flags
+  // ================================
+  try {
+    const candles1m: any[] =
+      (ctx as any).candles1m ??
+      (ctx as any).candles?.["1m"] ??
+      (ctx as any).series?.["1m"] ??
+      [];
+
+    const price =
+      typeof (ctx as any).price === "number" && !Number.isNaN((ctx as any).price)
+        ? (ctx as any).price
+        : null;
+
+    if (price !== null && Array.isArray(candles1m) && candles1m.length > 0) {
+      const sessionLevels = buildSessionLevels(
+        candles1m as any,
+        (ctx as any).sessionLevels
+      );
+
+      const asiaSweep = detectSweep(price, sessionLevels.asia);
+      const londonSweep = detectSweep(price, sessionLevels.london);
+      const nySweep = detectSweep(price, sessionLevels.ny);
+
+      // ✅ keep on ctx (engines use this)
+      (ctx as any).sessionLevels = sessionLevels;
+
+      (ctx as any).sweptAsiaHigh = asiaSweep.sweptHigh;
+      (ctx as any).sweptAsiaLow = asiaSweep.sweptLow;
+
+      (ctx as any).sweptLondonHigh = londonSweep.sweptHigh;
+      (ctx as any).sweptLondonLow = londonSweep.sweptLow;
+
+      (ctx as any).sweptNYHigh = nySweep.sweptHigh;
+      (ctx as any).sweptNYLow = nySweep.sweptLow;
+
+      // ✅ ALSO write to spiceStore (your debug UI reads these)
+      useSpiceStore.setState({
+        // session level highs/lows for UI
+        asiaHigh: sessionLevels.asia.high,
+        asiaLow: sessionLevels.asia.low,
+        londonHigh: sessionLevels.london.high,
+        londonLow: sessionLevels.london.low,
+        nyHigh: sessionLevels.ny.high,
+        nyLow: sessionLevels.ny.low,
+
+        // optional: expose completion flags for UI later
+        asiaComplete: sessionLevels.asia.complete,
+        londonComplete: sessionLevels.london.complete,
+        nyComplete: sessionLevels.ny.complete,
+
+        // sweeps for UI (and consistency)
+        sweptAsiaHigh: asiaSweep.sweptHigh,
+        sweptAsiaLow: asiaSweep.sweptLow,
+        sweptLondonHigh: londonSweep.sweptHigh,
+        sweptLondonLow: londonSweep.sweptLow,
+        sweptNYHigh: nySweep.sweptHigh,
+        sweptNYLow: nySweep.sweptLow,
+      } as any);
+    } else {
+      notes.push("Session levels skipped (missing price or 1m candles).");
+    }
+  } catch (err) {
+    console.error("[SPICE] Session Level Engine error:", err);
+    notes.push("Session Level Engine error (see console).");
+  }
+
+  // 1) Always run Entry Engine (structured decision)
   let entryDecision: EntryDecision | null = null;
 
   try {
-    // ✅ FIX: entryEngine expects AggregatorContext, so pass ctx directly
-    const entry = runEntryEngine(ctx);
+    // ✅ entryEngine expects AggregatorContext, so pass ctx directly
+    // NOTE: ctx.pendingEntry and ctx.candles1m may be read defensively in entryEngine.
+    // If your AggregatorContext doesn't include them yet, entryEngine still works.
+    const entry = runEntryEngine({
+      ...(ctx as any),
+      pendingEntry, // ✅ Option A
+      // candles1m should come from candleStore in your useSpiceEngine ctx builder.
+      // If it isn't present yet, entryEngine will WAIT/NO safely.
+    } as any);
 
-    // ✅ FIX: actually store the decision we computed
     entryDecision = entry;
 
     // ✅ PHASE 2 VALIDATION: always publish "why not" info
     const blockedBy: string[] = [];
 
-    if (ctx.price == null || Number.isNaN(ctx.price)) blockedBy.push("price missing/invalid");
+    if (ctx.price == null || Number.isNaN(ctx.price))
+      blockedBy.push("price missing/invalid");
     if (ctx.hasOpenTrade) blockedBy.push("already in trade (hasOpenTrade=true)");
     if (!ctx.session) blockedBy.push("session missing");
-    if (ctx.twentyEmaAboveTwoHundred == null) blockedBy.push("trend flag undefined (20>200)");
+    if (ctx.twentyEmaAboveTwoHundred == null)
+      blockedBy.push("trend flag undefined (20>200)");
     if (ctx.atAllTimeHigh == null) blockedBy.push("ATH flag undefined");
 
     // ✅ Include NY sweeps too
     const anySweep =
-      !!ctx.sweptAsiaHigh ||
-      !!ctx.sweptAsiaLow ||
-      !!ctx.sweptLondonHigh ||
-      !!ctx.sweptLondonLow ||
-      !!ctx.sweptNYHigh ||
-      !!ctx.sweptNYLow;
+      !!(ctx as any).sweptAsiaHigh ||
+      !!(ctx as any).sweptAsiaLow ||
+      !!(ctx as any).sweptLondonHigh ||
+      !!(ctx as any).sweptLondonLow ||
+      !!(ctx as any).sweptNYHigh ||
+      !!(ctx as any).sweptNYLow;
 
     if (!anySweep) blockedBy.push("no sweep flags true");
 
-    if (!entry?.shouldEnter) blockedBy.push("entryEngine.shouldEnter=false");
+    // ✅ Option A nuance:
+    // - ARM_ENTRY is NOT a "blocked" state; it's "setup found"
+    // - WAIT is also not "blocked"; it's "waiting for confirmation"
+    const action = (entryDecision as any)?.action as
+      | "ENTER"
+      | "ARM_ENTRY"
+      | "WAIT"
+      | "NO"
+      | undefined;
 
-    // ✅ Publish full trace (include NY fields so debug JSON can show them)
+    const isTrulyNo =
+      action === "NO" ||
+      (action == null && entryDecision && (entryDecision as any).shouldEnter === false);
+
+    if (isTrulyNo) blockedBy.push("entryEngine: no setup/blocked");
+
+    // ✅ Publish full trace (include pendingEntry + action)
     useEngineStore.getState().setEntryWhyNot({
       ts: Date.now(),
       evaluated: true,
-      price: ctx.price ?? undefined,
-      hasOpenTrade: !!ctx.hasOpenTrade,
+      price: (ctx as any).price ?? undefined,
+      hasOpenTrade: !!(ctx as any).hasOpenTrade,
       blockedBy,
 
-      twentyEmaAboveTwoHundred: ctx.twentyEmaAboveTwoHundred,
-      atAllTimeHigh: ctx.atAllTimeHigh,
+      twentyEmaAboveTwoHundred: (ctx as any).twentyEmaAboveTwoHundred,
+      atAllTimeHigh: (ctx as any).atAllTimeHigh,
 
-      sweptAsiaHigh: !!ctx.sweptAsiaHigh,
-      sweptAsiaLow: !!ctx.sweptAsiaLow,
-      sweptLondonHigh: !!ctx.sweptLondonHigh,
-      sweptLondonLow: !!ctx.sweptLondonLow,
+      sweptAsiaHigh: !!(ctx as any).sweptAsiaHigh,
+      sweptAsiaLow: !!(ctx as any).sweptAsiaLow,
+      sweptLondonHigh: !!(ctx as any).sweptLondonHigh,
+      sweptLondonLow: !!(ctx as any).sweptLondonLow,
 
-      // ✅ NEW
-      sweptNYHigh: !!ctx.sweptNYHigh,
-      sweptNYLow: !!ctx.sweptNYLow,
-    });
+      sweptNYHigh: !!(ctx as any).sweptNYHigh,
+      sweptNYLow: !!(ctx as any).sweptNYLow,
+
+      // ✅ Option A
+      entryAction: action,
+      pendingEntry: pendingEntry ?? null,
+    } as any);
 
     if (process.env.NODE_ENV === "development") {
       console.log("[SPICE][EntryEngine]", entryDecision);
@@ -98,30 +202,30 @@ export function runAggregator(
     } catch { }
   }
 
-  // 1) If no valid price, stay idle (but we already computed entryDecision)
-  const { price } = ctx;
+  // 2) If no valid price, stay idle (but we already computed entryDecision)
+  const { price } = ctx as any;
   if (price == null || Number.isNaN(price)) {
     notes.push("No valid price — engine idle.");
     return idleSnapshot(null, source, notes, entryDecision);
   }
 
-  // 2) Determine bias
+  // 3) Determine bias
   const bias = getBias(ctx, notes);
 
-  // 3) Multi-Timeframe Engine
+  // 4) Multi-Timeframe Engine
   const mteResult = computeMultiTimeframeState(ctx as any);
 
-  // 4) Entry / Exit *signals* (high-level engine recommendations)
+  // 5) Entry / Exit *signals* (high-level engine recommendations)
   let entrySignal: EngineEntrySignal | null = null;
   let exitSignal: EngineExitSignal | null = null;
 
-  if (!ctx.hasOpenTrade) {
+  if (!(ctx as any).hasOpenTrade) {
     entrySignal = getEntrySignal(ctx, bias, notes);
   } else {
     exitSignal = getExitSignal(ctx, bias, notes);
   }
 
-  // 5) Structured exitDecision (Exit Engine reads liveTrade from store)
+  // 6) Structured exitDecision (Exit Engine reads liveTrade from store)
   let exitDecision: ExitDecision | null = null;
 
   try {
@@ -141,10 +245,10 @@ export function runAggregator(
     console.error("[SPICE] Error computing exitDecision:", err);
   }
 
-  // 6) 🔥 Open a live trade when entryDecision says YES (with cooldown)
+  // 7) Option A — handle ARM_ENTRY / WAIT / ENTER with cooldown
   try {
-    const stateNow: any = useSpiceStore.getState();
-    const lastExitTime = stateNow.lastExitTime ?? 0;
+    const stateNow2: any = useSpiceStore.getState();
+    const lastExitTime = stateNow2.lastExitTime ?? 0;
     const COOLDOWN_MS = 30 * 1000;
 
     const nowMs = (ctx as any)?.nowMs ?? Date.now();
@@ -159,20 +263,68 @@ export function runAggregator(
       );
     }
 
+    const action = (entryDecision as any)?.action as
+      | "ENTER"
+      | "ARM_ENTRY"
+      | "WAIT"
+      | "NO"
+      | undefined;
+
+    // ✅ ARM_ENTRY: set pending entry (only if not already pending)
     if (
       entryDecision &&
-      entryDecision.shouldEnter &&
-      !ctx.hasOpenTrade &&
+      action === "ARM_ENTRY" &&
+      !(ctx as any).hasOpenTrade &&
+      !inCooldown &&
+      !pendingEntry
+    ) {
+      const dir =
+        (entryDecision as any).direction === "CALL"
+          ? "long"
+          : (entryDecision as any).direction === "PUT"
+            ? "short"
+            : null;
+
+      if (dir) {
+        const st: any = useSpiceStore.getState();
+        if (typeof st.setPendingEntry === "function") {
+          st.setPendingEntry({ direction: dir, triggerTime: nowMs });
+          notes.push(
+            `Armed pending entry (${dir}) — waiting for confirmation candle.`
+          );
+        } else {
+          notes.push("ARM_ENTRY requested but setPendingEntry is missing on store.");
+        }
+      } else {
+        notes.push("ARM_ENTRY requested but entryDecision.direction missing.");
+      }
+    }
+
+    // ✅ WAIT: do nothing (we're waiting for confirmation)
+    if (entryDecision && action === "WAIT") {
+      notes.push("Pending entry active — waiting for confirmation candle.");
+    }
+
+    // ✅ ENTER: open live trade (only on ENTER)
+    if (
+      entryDecision &&
+      action === "ENTER" &&
+      (entryDecision as any).shouldEnter &&
+      !(ctx as any).hasOpenTrade &&
       !inCooldown &&
       price != null
     ) {
       console.log("[SPICE] Opening live trade from entry engine:", entryDecision);
 
+      // clear pending entry first
+      const st: any = useSpiceStore.getState();
+      if (typeof st.clearPendingEntry === "function") st.clearPendingEntry();
+
       useSpiceStore.setState((state: any) => {
         const newTrade: any = {
           ...(state.liveTrade ?? {}),
           id: state.liveTrade?.id ?? `spice-trade-${nowMs.toString(36)}`,
-          direction: entryDecision.direction ?? null,
+          direction: (entryDecision as any).direction ?? null,
           entryPrice: price,
           entryTime: nowMs,
           isOpen: true,
@@ -185,15 +337,15 @@ export function runAggregator(
         } as any;
       });
 
-      notes.push("Opened live trade from entry engine.");
+      notes.push("Opened live trade from entry engine (confirmed).");
     }
   } catch (err) {
-    console.error("[SPICE] Error opening live trade from entryDecision:", err);
+    console.error("[SPICE] Error handling entryDecision (Option A):", err);
   }
 
-  // 7) 🔥 Close the live trade when exitDecision says to exit (and record lastExitTime)
+  // 8) 🔥 Close the live trade when exitDecision says to exit (and record lastExitTime)
   try {
-    if (exitDecision && ctx.hasOpenTrade && price != null) {
+    if (exitDecision && (ctx as any).hasOpenTrade && price != null) {
       const ed: any = exitDecision as any;
 
       const shouldClose =
@@ -222,6 +374,12 @@ export function runAggregator(
             lastExitTime: nowMs, // ✅ cooldown anchor
           } as any;
         });
+
+        // also clear any pending entry on exit (safety)
+        try {
+          const st: any = useSpiceStore.getState();
+          if (typeof st.clearPendingEntry === "function") st.clearPendingEntry();
+        } catch { }
 
         notes.push("Closed live trade from exit engine.");
       }
@@ -273,12 +431,12 @@ function idleSnapshot(
 // -----------------------------
 
 function getBias(ctx: AggregatorContext, notes: string[]): Bias {
-  if (ctx.twentyEmaAboveTwoHundred && !ctx.atAllTimeHigh) {
+  if ((ctx as any).twentyEmaAboveTwoHundred && !(ctx as any).atAllTimeHigh) {
     notes.push("20 EMA > 200 EMA and not at ATH → long bias.");
     return "long";
   }
 
-  if (!ctx.twentyEmaAboveTwoHundred) {
+  if (!(ctx as any).twentyEmaAboveTwoHundred) {
     notes.push("20 EMA < 200 EMA → short bias.");
     return "short";
   }
@@ -296,7 +454,7 @@ function getEntrySignal(
   bias: Bias,
   notes: string[]
 ): EngineEntrySignal | null {
-  if (ctx.newsImpactOn) {
+  if ((ctx as any).newsImpactOn) {
     notes.push("News impact ON → stricter filters for entries.");
   } else {
     notes.push("News impact OFF → ignoring news in entry filters.");
@@ -304,9 +462,9 @@ function getEntrySignal(
 
   if (
     bias === "long" &&
-    ctx.session === "new-york" &&
-    ctx.sweptLondonLow &&
-    !ctx.atAllTimeHigh
+    (ctx as any).session === "new-york" &&
+    !!(ctx as any).sweptLondonLow &&
+    !(ctx as any).atAllTimeHigh
   ) {
     notes.push("NY session + swept London low with long bias → long entry.");
     return {
@@ -318,12 +476,10 @@ function getEntrySignal(
 
   if (
     bias === "short" &&
-    ctx.session === "new-york" &&
-    (ctx.sweptAsiaHigh || ctx.sweptLondonHigh)
+    (ctx as any).session === "new-york" &&
+    (!!(ctx as any).sweptAsiaHigh || !!(ctx as any).sweptLondonHigh)
   ) {
-    notes.push(
-      "NY session + swept Asia/London high with short bias → short entry."
-    );
+    notes.push("NY session + swept Asia/London high with short bias → short entry.");
     return {
       direction: "short",
       reason: "NY session short after Asia/London high sweep.",
@@ -331,7 +487,7 @@ function getEntrySignal(
     };
   }
 
-  if (bias === "long" && ctx.atAllTimeHigh && !ctx.newsImpactOn) {
+  if (bias === "long" && (ctx as any).atAllTimeHigh && !(ctx as any).newsImpactOn) {
     notes.push("At ATH with long bias & news OFF → breakout long idea.");
     return {
       direction: "long",
@@ -362,7 +518,7 @@ function getExitSignal(
     };
   }
 
-  if (ctx.atAllTimeHigh && bias === "short") {
+  if ((ctx as any).atAllTimeHigh && bias === "short") {
     notes.push("Short bias at ATH while in trade → potential big flush.");
     return {
       action: "hold",
@@ -371,7 +527,7 @@ function getExitSignal(
     };
   }
 
-  if (ctx.newsImpactOn && ctx.session === "new-york") {
+  if ((ctx as any).newsImpactOn && (ctx as any).session === "new-york") {
     notes.push("News ON during NY → tighten risk / consider exit.");
     return {
       action: "reduce",

@@ -69,6 +69,7 @@ export default function Page() {
   const sweptNYHigh = useSpiceStore((s) => (s as any).sweptNYHigh);
   const sweptNYLow = useSpiceStore((s) => (s as any).sweptNYLow);
 
+  // store fallbacks (if you’ve also written highs/lows into the store)
   const asiaHigh = useSpiceStore((s) => (s as any).asiaHigh);
   const asiaLow = useSpiceStore((s) => (s as any).asiaLow);
   const londonHigh = useSpiceStore((s) => (s as any).londonHigh);
@@ -76,8 +77,7 @@ export default function Page() {
   const nyHigh = useSpiceStore((s) => (s as any).nyHigh);
   const nyLow = useSpiceStore((s) => (s as any).nyLow);
 
-  // ✅ this is the only new “must-have” selector for today
-  // (it assumes your spiceStore has resetTrade; if not, we’ll add it next)
+  // ✅ this assumes your spiceStore has resetTrade; if not, fallback will clear state directly
   const resetTrade = useSpiceStore((s) => (s as any).resetTrade);
 
   // 🔹 engine snapshot + phase2 trace
@@ -127,8 +127,8 @@ export default function Page() {
       entryDecision.direction === "CALL"
         ? "LONG (CALL)"
         : entryDecision.direction === "PUT"
-          ? "SHORT (PUT)"
-          : "NONE";
+        ? "SHORT (PUT)"
+        : "NONE";
 
     return {
       label: `Decision: ${entryDecision.shouldEnter ? dir : "NO-TRADE"}`,
@@ -184,10 +184,6 @@ export default function Page() {
     useSpiceStore.setState({ twentyEmaAboveTwoHundred: bull } as any);
   };
 
-  const setSession = (s: any) => {
-    useSpiceStore.setState({ session: s } as any);
-  };
-
   const toggleATH = () => {
     useSpiceStore.setState({ atAllTimeHigh: !atAllTimeHigh } as any);
   };
@@ -209,6 +205,27 @@ export default function Page() {
     (liveTrade as any)?.entryTime ??
     (liveTrade as any)?.entryAt ??
     null;
+
+  // ✅ Session levels: prefer engine ctx if present, fallback to store fields
+  const sessionLevelsFromCtx =
+    (engineSnapshot as any)?.ctx?.sessionLevels ??
+    (engineSnapshot as any)?.debug?.sessionLevels ??
+    null;
+
+  const aHigh = sessionLevelsFromCtx?.asia?.high ?? asiaHigh;
+  const aLow = sessionLevelsFromCtx?.asia?.low ?? asiaLow;
+
+  const lHigh = sessionLevelsFromCtx?.london?.high ?? londonHigh;
+  const lLow = sessionLevelsFromCtx?.london?.low ?? londonLow;
+
+  const nHigh = sessionLevelsFromCtx?.ny?.high ?? nyHigh;
+  const nLow = sessionLevelsFromCtx?.ny?.low ?? nyLow;
+
+  const aDone = !!sessionLevelsFromCtx?.asia?.complete;
+  const lDone = !!sessionLevelsFromCtx?.london?.complete;
+  const nDone = !!sessionLevelsFromCtx?.ny?.complete;
+
+  const fmtLevel = (v: any) => (typeof v === "number" ? v.toFixed(2) : "—");
 
   return (
     <div className="min-h-screen bg-black px-6 py-8 text-zinc-100">
@@ -281,10 +298,12 @@ export default function Page() {
 
           {/* ✅ quick trend / session / ATH toggles */}
           <div className="mt-3 flex flex-wrap gap-2">
-            <div className="rounded-xl border border-zinc-800 bg-zinc-950/60 p-3">
+            <div className="w-full rounded-xl border border-zinc-800 bg-zinc-950/60 p-3">
               <div className="flex items-center justify-between">
                 <div>
-                  <div className="text-sm font-semibold text-zinc-100">Session</div>
+                  <div className="text-sm font-semibold text-zinc-100">
+                    Session
+                  </div>
 
                   <div className="mt-0.5 text-xs text-zinc-400">
                     Current:{" "}
@@ -376,11 +395,12 @@ export default function Page() {
             </button>
           </div>
 
-
           {/* Liquidity & extremes */}
-          <div className="rounded-2xl border border-zinc-800 bg-zinc-950/70 p-4">
+          <div className="mt-3 rounded-2xl border border-zinc-800 bg-zinc-950/70 p-4">
             <div className="flex items-center justify-between">
-              <span className="text-xs uppercase text-zinc-400">Liquidity & Extremes</span>
+              <span className="text-xs uppercase text-zinc-400">
+                Liquidity & Extremes
+              </span>
               <span className="text-[10px] uppercase text-zinc-500">
                 {atAllTimeHigh ? "At/near ATH" : "Below ATH"}
               </span>
@@ -501,14 +521,15 @@ export default function Page() {
               Force NY Low Sweep
             </button>
 
-            {/* ✅ NEW: RESET TRADE (unsticks “already in trade”) */}
+            {/* ✅ RESET TRADE */}
             <button
               className="rounded-lg border border-red-700 bg-black/40 px-2 py-1 text-[11px] text-red-200 hover:bg-red-900/20"
               onClick={() => {
                 if (typeof resetTrade === "function") resetTrade();
                 else {
-                  // fallback safety: clear trade flags directly if store method isn't present
-                  useSpiceStore.setState({ liveTrade: null, hasOpenTrade: false } as any);
+                  useSpiceStore.setState(
+                    { liveTrade: null, hasOpenTrade: false } as any
+                  );
                 }
               }}
             >
@@ -533,7 +554,9 @@ export default function Page() {
 
           <div className="mt-3 text-sm">
             <div className="text-lg font-semibold">{entrySummary.label}</div>
-            <div className="mt-1 text-xs text-zinc-400">{entrySummary.reason}</div>
+            <div className="mt-1 text-xs text-zinc-400">
+              {entrySummary.reason}
+            </div>
           </div>
 
           {entryDecision?.debug && (
@@ -541,78 +564,6 @@ export default function Page() {
               {JSON.stringify(entryDecision.debug, null, 2)}
             </pre>
           )}
-
-          {entryDecision?.debug && (
-            <div className="mt-3 grid grid-cols-2 gap-2 text-[12px]">
-              <div className="rounded-lg border border-zinc-800 bg-black/30 p-2">
-                <div className="text-zinc-400">Bias</div>
-                <div className="text-zinc-200">
-                  {entryDecision.debug.bias ?? "—"}
-                </div>
-              </div>
-
-              <div className="rounded-lg border border-zinc-800 bg-black/30 p-2">
-                <div className="text-zinc-400">Trend (20 &gt; 200)</div>
-                <div className="text-zinc-200">
-                  {String(entryDecision.debug.twentyEmaAboveTwoHundred ?? "—")}
-                </div>
-              </div>
-
-              <div className="rounded-lg border border-zinc-800 bg-black/30 p-2">
-                <div className="text-zinc-400">ATH Context</div>
-                <div className="text-zinc-200">
-                  {String(entryDecision.debug.atAllTimeHigh ?? "—")}
-                </div>
-              </div>
-
-              <div className="rounded-lg border border-zinc-800 bg-black/30 p-2">
-                <div className="text-zinc-400">Session Sweep</div>
-                <div className="text-zinc-200">
-                  {entryDecision.debug.sweptNYHigh
-                    ? "NY High"
-                    : entryDecision.debug.sweptNYLow
-                      ? "NY Low"
-                      : entryDecision.debug.sweptLondonHigh
-                        ? "London High"
-                        : entryDecision.debug.sweptLondonLow
-                          ? "London Low"
-                          : entryDecision.debug.sweptAsiaHigh
-                            ? "Asia High"
-                            : entryDecision.debug.sweptAsiaLow
-                              ? "Asia Low"
-                              : "None"}
-                </div>
-              </div>
-            </div>
-          )}
-
-          <div className="mt-3 grid grid-cols-2 gap-2 text-[12px]">
-            <div className="rounded-xl border border-zinc-800 bg-black/30 p-2">
-              <div className="text-zinc-400">Bias</div>
-              <div className="text-zinc-200">{entryDecision?.debug?.bias ?? "—"}</div>
-            </div>
-
-            <div className="rounded-xl border border-zinc-800 bg-black/30 p-2">
-              <div className="text-zinc-400">Trend (20&gt;200)</div>
-              <div className="text-zinc-200">
-                {String(entryDecision?.debug?.twentyEmaAboveTwoHundred ?? "—")}
-              </div>
-            </div>
-
-            <div className="rounded-xl border border-zinc-800 bg-black/30 p-2">
-              <div className="text-zinc-400">NY High Sweep</div>
-              <div className="text-zinc-200">
-                {String(entryDecision?.debug?.sweptNYHigh ?? "—")}
-              </div>
-            </div>
-
-            <div className="rounded-xl border border-zinc-800 bg-black/30 p-2">
-              <div className="text-zinc-400">NY Low Sweep</div>
-              <div className="text-zinc-200">
-                {String(entryDecision?.debug?.sweptNYLow ?? "—")}
-              </div>
-            </div>
-          </div>
 
           {/* ✅ PHASE 2 VALIDATION: why no trade */}
           <div className="mt-4 rounded-xl border border-zinc-800 bg-black/30 p-3">
@@ -631,7 +582,7 @@ export default function Page() {
               </div>
             ) : entryWhyNot?.blockedBy?.length ? (
               <ul className="mt-2 list-disc space-y-1 pl-5 text-[12px] text-zinc-300">
-                {entryWhyNot.blockedBy.map((b) => (
+                {entryWhyNot.blockedBy.map((b: string) => (
                   <li key={b}>{b}</li>
                 ))}
               </ul>
@@ -652,10 +603,11 @@ export default function Page() {
                 Current Trade
               </span>
               <span
-                className={`rounded-full px-2 py-0.5 text-[10px] uppercase ${hasOpenTrade
-                  ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/60"
-                  : "bg-zinc-800 text-zinc-300 border border-zinc-700/60"
-                  }`}
+                className={`rounded-full px-2 py-0.5 text-[10px] uppercase ${
+                  hasOpenTrade
+                    ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/60"
+                    : "bg-zinc-800 text-zinc-300 border border-zinc-700/60"
+                }`}
               >
                 {hasOpenTrade ? "Open" : "Flat"}
               </span>
@@ -695,36 +647,74 @@ export default function Page() {
 
           {/* session levels */}
           <div className="rounded-2xl border border-zinc-800 bg-zinc-950/70 p-4">
-            <div className="mb-2 text-xs uppercase text-zinc-400">
-              Session Levels
+            <div className="flex items-center justify-between">
+              <div className="text-xs uppercase text-zinc-400">Session Levels</div>
+              <div className="text-[10px] uppercase text-zinc-500">
+                Source: {sessionLevelsFromCtx ? "engine" : "store"}
+              </div>
             </div>
-            <div className="grid grid-cols-2 gap-y-1 text-[11px]">
+
+            <div className="mt-3 grid grid-cols-2 gap-y-1 text-[11px]">
               <span className="text-zinc-400">Asia High</span>
-              <span className="text-right">
-                {asiaHigh ? Number(asiaHigh).toFixed(2) : "—"}
+              <span className="text-right font-mono text-zinc-200">
+                {fmtLevel(aHigh)}
               </span>
               <span className="text-zinc-400">Asia Low</span>
-              <span className="text-right">
-                {asiaLow ? Number(asiaLow).toFixed(2) : "—"}
+              <span className="text-right font-mono text-zinc-200">
+                {fmtLevel(aLow)}
               </span>
 
               <span className="mt-1 text-zinc-400">London High</span>
-              <span className="mt-1 text-right">
-                {londonHigh ? Number(londonHigh).toFixed(2) : "—"}
+              <span className="mt-1 text-right font-mono text-zinc-200">
+                {fmtLevel(lHigh)}
               </span>
               <span className="text-zinc-400">London Low</span>
-              <span className="text-right">
-                {londonLow ? Number(londonLow).toFixed(2) : "—"}
+              <span className="text-right font-mono text-zinc-200">
+                {fmtLevel(lLow)}
               </span>
 
               <span className="mt-1 text-zinc-400">NY High</span>
-              <span className="mt-1 text-right">
-                {nyHigh ? Number(nyHigh).toFixed(2) : "—"}
+              <span className="mt-1 text-right font-mono text-zinc-200">
+                {fmtLevel(nHigh)}
               </span>
               <span className="text-zinc-400">NY Low</span>
-              <span className="text-right">
-                {nyLow ? Number(nyLow).toFixed(2) : "—"}
+              <span className="text-right font-mono text-zinc-200">
+                {fmtLevel(nLow)}
               </span>
+            </div>
+
+            <div className="mt-3 grid grid-cols-3 gap-2 text-[10px]">
+              <span
+                className={
+                  aDone
+                    ? "rounded-full bg-emerald-500/10 px-2 py-0.5 text-center text-emerald-400"
+                    : "rounded-full bg-zinc-800 px-2 py-0.5 text-center text-zinc-400"
+                }
+              >
+                Asia {aDone ? "complete" : "building"}
+              </span>
+              <span
+                className={
+                  lDone
+                    ? "rounded-full bg-emerald-500/10 px-2 py-0.5 text-center text-emerald-400"
+                    : "rounded-full bg-zinc-800 px-2 py-0.5 text-center text-zinc-400"
+                }
+              >
+                London {lDone ? "complete" : "building"}
+              </span>
+              <span
+                className={
+                  nDone
+                    ? "rounded-full bg-emerald-500/10 px-2 py-0.5 text-center text-emerald-400"
+                    : "rounded-full bg-zinc-800 px-2 py-0.5 text-center text-zinc-400"
+                }
+              >
+                NY {nDone ? "complete" : "building"}
+              </span>
+            </div>
+
+            <div className="mt-2 text-[10px] text-zinc-500">
+              Confirm: values should appear during each session window.
             </div>
           </div>
         </div>
@@ -883,7 +873,7 @@ export default function Page() {
 
             const direction =
               entryDecision?.direction === "CALL" ||
-                entryDecision?.direction === "PUT"
+              entryDecision?.direction === "PUT"
                 ? entryDecision.direction
                 : "CALL";
 
@@ -893,8 +883,7 @@ export default function Page() {
               contracts: 1,
               setupTag: entryDecision?.reason ?? "UNKNOWN",
               sessionTag: session ?? "UNKNOWN",
-              thesis: `SPICE Entry — ${entryDecision?.reason ?? "no reason detected"
-                }`,
+              thesis: `SPICE Entry — ${entryDecision?.reason ?? "no reason detected"}`,
             });
           }}
         >
