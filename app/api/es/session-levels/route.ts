@@ -20,24 +20,49 @@ function addDays(day: string, delta: number) {
   return `${yy}-${mm}-${dd}`;
 }
 
-// Convert NY "wall time" to UTC ms for a given YYYY-MM-DD + hh:mm
+// Convert NY "wall time" (America/New_York) to UTC ms for a given YYYY-MM-DD + hh:mm
 function nyWallTimeToUtcMs(day: string, hh: number, mm: number) {
   const [y, m, d] = day.split("-").map(Number);
+  const desiredAsUtc = Date.UTC(y, m - 1, d, hh, mm, 0);
 
-  const wall = `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(
-    2,
-    "0"
-  )} ${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}:00`;
+  const dtf = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  });
 
-  const ny = new Date(
-    new Date(wall).toLocaleString("en-US", { timeZone: "America/New_York" })
-  );
-  const utc = new Date(
-    new Date(wall).toLocaleString("en-US", { timeZone: "UTC" })
-  );
+  const partsToUtc = (utcMs: number) => {
+    const parts = dtf.formatToParts(new Date(utcMs));
+    const get = (type: string) =>
+      Number(parts.find((p) => p.type === type)?.value);
 
-  const offset = utc.getTime() - ny.getTime();
-  return new Date(wall).getTime() + offset;
+    const yy = get("year");
+    const mo = get("month");
+    const da = get("day");
+    const ho = get("hour");
+    const mi = get("minute");
+    const se = get("second");
+
+    // Treat the NY wall components as if they were UTC to compare apples-to-apples
+    return Date.UTC(yy, mo - 1, da, ho, mi, se);
+  };
+
+  // Start with a UTC guess (same components), then iteratively correct
+  let utcMs = desiredAsUtc;
+
+  for (let i = 0; i < 3; i++) {
+    const wallAsUtc = partsToUtc(utcMs);
+    const delta = desiredAsUtc - wallAsUtc;
+    utcMs += delta;
+    if (delta === 0) break;
+  }
+
+  return utcMs;
 }
 
 function clampMs(ms: number) {
@@ -141,6 +166,30 @@ export async function GET(req: Request) {
       nocache,
     });
 
+    const debugOnly = searchParams.get("debugOnly") === "1";
+    if (debugOnly) {
+      return NextResponse.json({
+        ok: true,
+        day,
+        prev,
+        ticker,
+        windows: {
+          asia: {
+            fromMs: asiaFromMs,
+            toMs: asiaToMs,
+            fromNY: new Date(asiaFromMs).toLocaleString("en-US", { timeZone: "America/New_York" }),
+            toNY: new Date(asiaToMs).toLocaleString("en-US", { timeZone: "America/New_York" }),
+          },
+          london: {
+            fromMs: londonFromMs,
+            toMs: londonToMs,
+            fromNY: new Date(londonFromMs).toLocaleString("en-US", { timeZone: "America/New_York" }),
+            toNY: new Date(londonToMs).toLocaleString("en-US", { timeZone: "America/New_York" }),
+          },
+        },
+      });
+    }
+
     const barsRaw = await fetchFuturesAggs({
       ticker,
       fromMs,
@@ -195,8 +244,6 @@ export async function GET(req: Request) {
       {
         ok: false,
         error: String(err?.message ?? err),
-        day,
-        ticker,
         asia: null,
         london: null,
         blockedByProvider: true,
