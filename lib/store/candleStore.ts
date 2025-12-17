@@ -219,3 +219,8 @@ export const useCandleStore = create<CandleStoreState>((set, get) => ({
     return get().candles[tf] ?? [];
   },
 }));
+
+// DEV: expose store in browser console
+if (typeof window !== "undefined") {
+  (window as any).__CANDLE_STORE__ = useCandleStore;
+}

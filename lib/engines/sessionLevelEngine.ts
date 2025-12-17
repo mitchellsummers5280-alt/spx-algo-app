@@ -1,91 +1,178 @@
 // lib/engines/sessionLevelEngine.ts
+// Computes rolling session highs/lows from 1m candles (seeded history + live updates).
+// Goal: During NY trading, Asia/London should already be populated from earlier candles.
 
-import type { Candle } from "@/lib/store/candleStore";
-import { SESSION_TIMES } from "./sessionTimes";
-import type { SessionId, SessionLevels } from "./sessionTypes";
+export type SessionId = "asia" | "london" | "ny";
 
-type SessionState = Record<SessionId, SessionLevels>;
+export type SessionHL = {
+  high: number | null;
+  low: number | null;
+};
 
-function timeToMinutes(t: string) {
-  const [h, m] = t.split(":").map(Number);
-  return h * 60 + m;
-}
+export type SessionLevels = {
+  asia: SessionHL;
+  london: SessionHL;
+  ny: SessionHL;
+};
 
-/**
- * Always compute time in America/New_York so this works regardless of machine TZ.
- */
-function getEtMinutes(ms: number) {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: "America/New_York",
+type CandleLike = {
+  t: number; // ms since epoch
+  h: number;
+  l: number;
+};
+
+// ET session windows in minutes since midnight (America/New_York).
+// Note: Asia crosses midnight.
+const SESSION_WINDOWS: Record<
+  SessionId,
+  { startMin: number; endMin: number; crossesMidnight: boolean }
+> = {
+  // 8:00 PM -> 2:00 AM ET (common futures “Asia” window)
+  asia: { startMin: 20 * 60, endMin: 2 * 60, crossesMidnight: true },
+
+  // 2:00 AM -> 9:30 AM ET
+  london: { startMin: 2 * 60, endMin: 9 * 60 + 30, crossesMidnight: false },
+
+  // 9:30 AM -> 11:30 AM ET (your “trade window”)
+  ny: { startMin: 9 * 60 + 30, endMin: 11 * 60 + 30, crossesMidnight: false },
+};
+
+const TZ = "America/New_York";
+
+function etParts(ms: number) {
+  const d = new Date(ms);
+  const fmt = new Intl.DateTimeFormat("en-US", {
+    timeZone: TZ,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
     hour: "2-digit",
     minute: "2-digit",
     hour12: false,
-  }).formatToParts(new Date(ms));
+  });
 
-  const hh = Number(parts.find((p) => p.type === "hour")?.value ?? "0");
-  const mm = Number(parts.find((p) => p.type === "minute")?.value ?? "0");
-  return hh * 60 + mm;
+  const parts = fmt.formatToParts(d);
+  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? "00";
+
+  const yyyy = get("year");
+  const mm = get("month");
+  const dd = get("day");
+  const hh = parseInt(get("hour"), 10);
+  const mi = parseInt(get("minute"), 10);
+
+  return {
+    ymd: `${yyyy}-${mm}-${dd}`,
+    minutes: hh * 60 + mi,
+  };
 }
 
-function isInSession(candleTime: number, start: string, end: string): boolean {
-  const now = getEtMinutes(candleTime);
-  const s = timeToMinutes(start);
-  const e = timeToMinutes(end);
+function ymdMinus1(ymd: string) {
+  // ymd in ET; subtract one day safely using Date in UTC by parsing components
+  const [Y, M, D] = ymd.split("-").map((x) => parseInt(x, 10));
+  const dt = new Date(Date.UTC(Y, (M ?? 1) - 1, D ?? 1));
+  dt.setUTCDate(dt.getUTCDate() - 1);
+  const yyyy = dt.getUTCFullYear();
+  const mm = String(dt.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(dt.getUTCDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
 
-  // Overnight session (e.g., Asia) where end < start
-  if (e < s) return now >= s || now <= e;
-  return now >= s && now <= e;
+function candleSessionKey(c: CandleLike, session: SessionId) {
+  const w = SESSION_WINDOWS[session];
+  const { ymd, minutes } = etParts(c.t);
+
+  if (!w.crossesMidnight) {
+    // normal window: same-day membership
+    if (minutes >= w.startMin && minutes < w.endMin) return `${session}:${ymd}`;
+    return null;
+  }
+
+  // crosses midnight (Asia):
+  // membership if minutes >= start OR minutes < end
+  const inWindow = minutes >= w.startMin || minutes < w.endMin;
+  if (!inWindow) return null;
+
+  // anchor date should be the START date of the session.
+  // If we're after midnight (minutes < endMin), anchor to previous day.
+  const anchor = minutes < w.endMin ? ymdMinus1(ymd) : ymd;
+  return `${session}:${anchor}`;
+}
+
+function pickTargetKey(nowMs: number, session: SessionId) {
+  // We want:
+  // - Asia/London: most recent COMPLETED session during NY (so levels already exist)
+  // - NY: current in-progress if inside window, else most recent completed
+  const { ymd, minutes } = etParts(nowMs);
+  const w = SESSION_WINDOWS[session];
+
+  if (session === "ny") {
+    // If currently inside NY window, target today
+    if (minutes >= w.startMin && minutes < w.endMin) return `ny:${ymd}`;
+    // otherwise last completed NY is yesterday (because today’s hasn’t happened yet or already finished)
+    return `ny:${ymdMinus1(ymd)}`;
+  }
+
+  if (session === "london") {
+    // If we are AFTER London end (>= 9:30), target today’s London (completed)
+    if (minutes >= w.endMin) return `london:${ymd}`;
+    // If we are before London end, target yesterday’s London (most recent completed)
+    return `london:${ymdMinus1(ymd)}`;
+  }
+
+  // Asia crosses midnight
+  // If we are AFTER Asia end (>= 2:00) and before next Asia start (20:00),
+  // then the most recent completed Asia is anchored to yesterday.
+  // If we are inside Asia window (>=20:00 or <2:00), target the current in-progress Asia (anchored appropriately).
+  if (minutes >= w.startMin || minutes < w.endMin) {
+    // in-progress Asia
+    const anchor = minutes < w.endMin ? ymdMinus1(ymd) : ymd;
+    return `asia:${anchor}`;
+  }
+
+  // not in Asia window => last completed Asia anchored to yesterday
+  return `asia:${ymdMinus1(ymd)}`;
+}
+
+function computeHL(candles: CandleLike[], key: string): SessionHL {
+  let hi: number | null = null;
+  let lo: number | null = null;
+
+  for (const c of candles) {
+    // require basic sanity
+    if (!Number.isFinite(c.t) || !Number.isFinite(c.h) || !Number.isFinite(c.l)) continue;
+
+    const kAsia = key.startsWith("asia:") ? candleSessionKey(c, "asia") : null;
+    const kLon = key.startsWith("london:") ? candleSessionKey(c, "london") : null;
+    const kNy = key.startsWith("ny:") ? candleSessionKey(c, "ny") : null;
+
+    const k = kAsia ?? kLon ?? kNy;
+    if (k !== key) continue;
+
+    hi = hi == null ? c.h : Math.max(hi, c.h);
+    lo = lo == null ? c.l : Math.min(lo, c.l);
+  }
+
+  return { high: hi, low: lo };
 }
 
 /**
- * ✅ History reducer:
- * Compute session levels from recent history (last ~36h by default),
- * so Asia/London appear immediately after seeding candles.
+ * buildSessionLevels(oneMinCandles, prev?)
+ * - oneMinCandles: 1m candles (seeded + live)
+ * - prev: optional previous levels (ignored here but allowed for compatibility)
  */
 export function buildSessionLevels(
-  candles1m: Candle[],
-  _prev?: SessionState,
-  lookbackMs: number = 36 * 60 * 60 * 1000
-): SessionState {
-  const nowMs = Date.now();
-  const cutoff = nowMs - lookbackMs;
+  oneMinCandles: CandleLike[],
+  _prev?: any
+): SessionLevels {
+  const now = Date.now();
 
-  const state: SessionState = {
-    asia: { high: null, low: null, complete: false },
-    london: { high: null, low: null, complete: false },
-    ny: { high: null, low: null, complete: false },
-  };
+  const asiaKey = pickTargetKey(now, "asia");
+  const londonKey = pickTargetKey(now, "london");
+  const nyKey = pickTargetKey(now, "ny");
 
-  const recent = Array.isArray(candles1m)
-    ? candles1m.filter((c) => typeof c?.t === "number" && c.t >= cutoff)
-    : [];
+  const asia = computeHL(oneMinCandles, asiaKey);
+  const london = computeHL(oneMinCandles, londonKey);
+  const ny = computeHL(oneMinCandles, nyKey);
 
-  for (const c of recent) {
-    // ASIA
-    if (isInSession(c.t, SESSION_TIMES.ASIA.start, SESSION_TIMES.ASIA.end)) {
-      state.asia.high = state.asia.high === null ? c.h : Math.max(state.asia.high, c.h);
-      state.asia.low = state.asia.low === null ? c.l : Math.min(state.asia.low, c.l);
-    }
-
-    // LONDON
-    if (isInSession(c.t, SESSION_TIMES.LONDON.start, SESSION_TIMES.LONDON.end)) {
-      state.london.high =
-        state.london.high === null ? c.h : Math.max(state.london.high, c.h);
-      state.london.low =
-        state.london.low === null ? c.l : Math.min(state.london.low, c.l);
-    }
-
-    // NY
-    if (isInSession(c.t, SESSION_TIMES.NY.start, SESSION_TIMES.NY.end)) {
-      state.ny.high = state.ny.high === null ? c.h : Math.max(state.ny.high, c.h);
-      state.ny.low = state.ny.low === null ? c.l : Math.min(state.ny.low, c.l);
-    }
-  }
-
-  // Mark complete if we found any values in the lookback window
-  state.asia.complete = state.asia.high !== null && state.asia.low !== null;
-  state.london.complete = state.london.high !== null && state.london.low !== null;
-  state.ny.complete = state.ny.high !== null && state.ny.low !== null;
-
-  return state;
+  return { asia, london, ny };
 }

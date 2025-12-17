@@ -8,7 +8,19 @@ const g = globalThis as any;
 g.__ES_SESSION_CACHE__ ??= new Map<string, CacheEntry>();
 const cache: Map<string, CacheEntry> = g.__ES_SESSION_CACHE__;
 
-// Convert NY wall time (YYYY-MM-DD + hh:mm ET) -> UTC epoch ms
+// ---------- helpers ----------
+
+function addDays(day: string, delta: number) {
+  const [y, m, d] = day.split("-").map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d, 12, 0, 0)); // midday avoids DST edge weirdness
+  dt.setUTCDate(dt.getUTCDate() + delta);
+  const yy = dt.getUTCFullYear();
+  const mm = String(dt.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(dt.getUTCDate()).padStart(2, "0");
+  return `${yy}-${mm}-${dd}`;
+}
+
+// Convert NY "wall time" to UTC ms for a given YYYY-MM-DD + hh:mm
 function nyWallTimeToUtcMs(day: string, hh: number, mm: number) {
   const [y, m, d] = day.split("-").map(Number);
 
@@ -20,21 +32,17 @@ function nyWallTimeToUtcMs(day: string, hh: number, mm: number) {
   const ny = new Date(
     new Date(wall).toLocaleString("en-US", { timeZone: "America/New_York" })
   );
-  const utc = new Date(new Date(wall).toLocaleString("en-US", { timeZone: "UTC" }));
+  const utc = new Date(
+    new Date(wall).toLocaleString("en-US", { timeZone: "UTC" })
+  );
 
   const offset = utc.getTime() - ny.getTime();
   return new Date(wall).getTime() + offset;
 }
 
-// day +/- N in YYYY-MM-DD
-function addDays(day: string, delta: number) {
-  const [y, m, d] = day.split("-").map(Number);
-  const dt = new Date(Date.UTC(y, m - 1, d, 12, 0, 0)); // midday avoids DST edge issues
-  dt.setUTCDate(dt.getUTCDate() + delta);
-  const yy = dt.getUTCFullYear();
-  const mm = String(dt.getUTCMonth() + 1).padStart(2, "0");
-  const dd = String(dt.getUTCDate()).padStart(2, "0");
-  return `${yy}-${mm}-${dd}`;
+function clampMs(ms: number) {
+  if (!Number.isFinite(ms)) throw new Error(`Bad ms: ${ms}`);
+  return ms;
 }
 
 function computeHiLo(bars: any[]) {
@@ -42,8 +50,11 @@ function computeHiLo(bars: any[]) {
   let lo = Infinity;
 
   for (const b of bars) {
-    const h = typeof b.h === "number" ? b.h : typeof b.high === "number" ? b.high : null;
-    const l = typeof b.l === "number" ? b.l : typeof b.low === "number" ? b.low : null;
+    const h =
+      typeof b.h === "number" ? b.h : typeof b.high === "number" ? b.high : null;
+    const l =
+      typeof b.l === "number" ? b.l : typeof b.low === "number" ? b.low : null;
+
     if (h != null) hi = Math.max(hi, h);
     if (l != null) lo = Math.min(lo, l);
   }
@@ -52,11 +63,13 @@ function computeHiLo(bars: any[]) {
   return { high: hi, low: lo };
 }
 
+// ---------- route ----------
+
 export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
 
-    const day = searchParams.get("day"); // NY day YYYY-MM-DD
+    const day = searchParams.get("day");
     if (!day || !/^\d{4}-\d{2}-\d{2}$/.test(day)) {
       return NextResponse.json(
         { error: "Missing/invalid day. Expected YYYY-MM-DD" },
@@ -66,12 +79,16 @@ export async function GET(req: Request) {
 
     const nocache = searchParams.get("nocache") === "1";
 
-    // Resolve contract via your existing endpoint
+    // Resolve correct ES contract for this day
     const baseUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+
     const r = await fetch(
-      `${baseUrl}/api/es/resolve-contract?day=${encodeURIComponent(day)}&product_code=ES`,
+      `${baseUrl}/api/es/resolve-contract?day=${encodeURIComponent(
+        day
+      )}&product_code=ES`,
       { cache: "no-store" }
     );
+
     if (!r.ok) {
       const txt = await r.text().catch(() => "");
       throw new Error(`Resolve-contract failed (${r.status}): ${txt}`);
@@ -83,30 +100,48 @@ export async function GET(req: Request) {
       resolved?.chosen?.symbol ||
       resolved?.chosen?.contract_ticker;
 
-    if (!resolvedTicker) throw new Error("No ES contract resolved (missing chosen.ticker)");
+    if (!resolvedTicker) {
+      throw new Error("No ES contract resolved (missing chosen.ticker)");
+    }
+
     const ticker = String(resolvedTicker).toUpperCase();
 
     const cacheKey = `${ticker}|${day}`;
-    const hit = cache.get(cacheKey);
-    if (!nocache && hit && Date.now() - hit.ts < CACHE_TTL_MS) {
-      return NextResponse.json(hit.body);
+    if (!nocache) {
+      const hit = cache.get(cacheKey);
+      if (hit && Date.now() - hit.ts < CACHE_TTL_MS) {
+        return NextResponse.json(hit.body);
+      }
     }
 
-    // ✅ Session definitions you want:
-    // Asia: 18:00 → 02:00 ET (crosses midnight, starts on previous calendar day)
-    // London: 02:00 → 08:30 ET (same NY day)
-    const prevDay = addDays(day, -1);
+    // ✅ Institutional session windows for a NY "day"
+    // Asia: (day-1) 18:00 ET → (day) 02:00 ET
+    // London: (day) 02:00 ET → (day) 08:30 ET
+    const prev = addDays(day, -1);
 
-    const asiaFromMs = nyWallTimeToUtcMs(prevDay, 18, 0); // prev day 6:00 PM ET
-    const asiaToMs = nyWallTimeToUtcMs(day, 2, 0);        // day 2:00 AM ET
-    const londonFromMs = asiaToMs;                        // 2:00 AM ET
-    const londonToMs = nyWallTimeToUtcMs(day, 8, 30);     // day 8:30 AM ET
+    const asiaFromMs = clampMs(nyWallTimeToUtcMs(prev, 18, 0)); // prev day 6pm
+    const asiaToMs = clampMs(nyWallTimeToUtcMs(day, 2, 0));     // day 2am
 
-    // One broad fetch: 6:00 PM prev day -> 8:30 AM day
+    const londonFromMs = asiaToMs;                              // day 2am
+    const londonToMs = clampMs(nyWallTimeToUtcMs(day, 8, 30));  // day 8:30am
+
     const fromMs = asiaFromMs;
     const toMs = londonToMs;
 
-    const bars = await fetchFuturesAggs({
+    console.log("[ES SESSION] fetch", {
+      day,
+      prev,
+      ticker,
+      fromMs,
+      toMs,
+      asiaFromMs,
+      asiaToMs,
+      londonFromMs,
+      londonToMs,
+      nocache,
+    });
+
+    const barsRaw = await fetchFuturesAggs({
       ticker,
       fromMs,
       toMs,
@@ -114,13 +149,15 @@ export async function GET(req: Request) {
       limit: 50000,
     });
 
-    // Ensure ascending for predictable debug
-    const sorted = [...bars].sort((a: any, b: any) => (a.t ?? 0) - (b.t ?? 0));
+    const bars = Array.isArray(barsRaw) ? [...barsRaw] : [];
+    bars.sort((a, b) => (a?.t ?? 0) - (b?.t ?? 0));
 
     const inRange = (t: number, a: number, b: number) => t >= a && t < b;
 
-    const asiaBars = sorted.filter((b: any) => inRange(b.t, asiaFromMs, asiaToMs));
-    const londonBars = sorted.filter((b: any) => inRange(b.t, londonFromMs, londonToMs));
+    const asiaBars = bars.filter((b: any) => inRange(b.t, asiaFromMs, asiaToMs));
+    const londonBars = bars.filter((b: any) =>
+      inRange(b.t, londonFromMs, londonToMs)
+    );
 
     const asia = computeHiLo(asiaBars);
     const london = computeHiLo(londonBars);
@@ -129,19 +166,23 @@ export async function GET(req: Request) {
       ok: true,
       day,
       ticker,
-      resolvedFrom: resolved?.chosen ?? null,
+      resolvedFrom: resolved?.chosen ?? resolved,
       windows: {
-        asia: { fromMs: asiaFromMs, toMs: asiaToMs },       // 6pm -> 2am
-        london: { fromMs: londonFromMs, toMs: londonToMs }, // 2am -> 8:30am
+        asia: { fromMs: asiaFromMs, toMs: asiaToMs },
+        london: { fromMs: londonFromMs, toMs: londonToMs },
       },
-      counts: { total: sorted.length, asia: asiaBars.length, london: londonBars.length },
+      counts: {
+        total: bars.length,
+        asia: asiaBars.length,
+        london: londonBars.length,
+      },
       asia,
       london,
       debugTs: {
         fromMs,
         toMs,
-        firstTimeMs: sorted?.[0]?.t ?? null,
-        lastTimeMs: sorted?.[sorted.length - 1]?.t ?? null,
+        firstTimeMs: bars?.[0]?.t ?? null,
+        lastTimeMs: bars?.[bars.length - 1]?.t ?? null,
       },
     };
 
@@ -149,6 +190,18 @@ export async function GET(req: Request) {
     return NextResponse.json(body);
   } catch (err: any) {
     console.error("[/api/es/session-levels] error:", err?.message ?? err);
-    return NextResponse.json({ error: String(err?.message ?? err) }, { status: 500 });
+
+    return NextResponse.json(
+      {
+        ok: false,
+        error: String(err?.message ?? err),
+        day,
+        ticker,
+        asia: null,
+        london: null,
+        blockedByProvider: true,
+      },
+      { status: 500 }
+    );
   }
 }

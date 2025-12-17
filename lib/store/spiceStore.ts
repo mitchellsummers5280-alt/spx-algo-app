@@ -159,3 +159,8 @@ export const useSpiceStore = create<SpiceStoreState>((set) => ({
       pendingEntry: undefined,
     }),
 }));
+
+// DEV: expose store in browser console
+if (typeof window !== "undefined") {
+  (window as any).__SPICE_STORE__ = useSpiceStore;
+}

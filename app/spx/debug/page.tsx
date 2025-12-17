@@ -8,6 +8,8 @@ import { useSpiceEngine } from "@/lib/hooks/useSpiceEngine";
 import { useEngineStore } from "@/lib/store/engineStore";
 import { useJournalStore } from "@/lib/store/journalStore";
 import { usePolygonLive } from "@/lib/hooks/usePolygonLive";
+import { useSessionLevelsStore } from "@/lib/store/sessionLevelsStore";
+import { useInstitutionalSessions } from "@/lib/hooks/useInstitutionalSessions";
 
 function formatTime(ms: number) {
   const d = new Date(ms);
@@ -49,7 +51,9 @@ function computeEMAFromCandles(candles: any[] | undefined, length: number) {
 export default function Page() {
   // keep SPICE engine running (single instance)
   usePolygonLive();
+  useInstitutionalSessions();
   const { etTime, isNYSession } = useSpiceEngine();
+  const esLevels = useSessionLevelsStore((s) => s.es);
 
   // 🔹 core SPICE state
   const price = useSpiceStore((s) => s.price);
@@ -127,8 +131,8 @@ export default function Page() {
       entryDecision.direction === "CALL"
         ? "LONG (CALL)"
         : entryDecision.direction === "PUT"
-        ? "SHORT (PUT)"
-        : "NONE";
+          ? "SHORT (PUT)"
+          : "NONE";
 
     return {
       label: `Decision: ${entryDecision.shouldEnter ? dir : "NO-TRADE"}`,
@@ -212,17 +216,20 @@ export default function Page() {
     (engineSnapshot as any)?.debug?.sessionLevels ??
     null;
 
-  const aHigh = sessionLevelsFromCtx?.asia?.high ?? asiaHigh;
-  const aLow = sessionLevelsFromCtx?.asia?.low ?? asiaLow;
+  const aHigh = esLevels.asiaHigh ?? sessionLevelsFromCtx?.asia?.high ?? asiaHigh;
+  const aLow = esLevels.asiaLow ?? sessionLevelsFromCtx?.asia?.low ?? asiaLow;
 
-  const lHigh = sessionLevelsFromCtx?.london?.high ?? londonHigh;
-  const lLow = sessionLevelsFromCtx?.london?.low ?? londonLow;
+  const lHigh = esLevels.londonHigh ?? sessionLevelsFromCtx?.london?.high ?? londonHigh;
+  const lLow = esLevels.londonLow ?? sessionLevelsFromCtx?.london?.low ?? londonLow;
 
   const nHigh = sessionLevelsFromCtx?.ny?.high ?? nyHigh;
   const nLow = sessionLevelsFromCtx?.ny?.low ?? nyLow;
 
-  const aDone = !!sessionLevelsFromCtx?.asia?.complete;
-  const lDone = !!sessionLevelsFromCtx?.london?.complete;
+  const aDone =
+    typeof esLevels?.asiaHigh === "number" && typeof esLevels?.asiaLow === "number";
+  const lDone =
+    typeof esLevels?.londonHigh === "number" &&
+    typeof esLevels?.londonLow === "number";
   const nDone = !!sessionLevelsFromCtx?.ny?.complete;
 
   const fmtLevel = (v: any) => (typeof v === "number" ? v.toFixed(2) : "—");
@@ -603,11 +610,10 @@ export default function Page() {
                 Current Trade
               </span>
               <span
-                className={`rounded-full px-2 py-0.5 text-[10px] uppercase ${
-                  hasOpenTrade
-                    ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/60"
-                    : "bg-zinc-800 text-zinc-300 border border-zinc-700/60"
-                }`}
+                className={`rounded-full px-2 py-0.5 text-[10px] uppercase ${hasOpenTrade
+                  ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/60"
+                  : "bg-zinc-800 text-zinc-300 border border-zinc-700/60"
+                  }`}
               >
                 {hasOpenTrade ? "Open" : "Flat"}
               </span>
@@ -650,7 +656,7 @@ export default function Page() {
             <div className="flex items-center justify-between">
               <div className="text-xs uppercase text-zinc-400">Session Levels</div>
               <div className="text-[10px] uppercase text-zinc-500">
-                Source: {sessionLevelsFromCtx ? "engine" : "store"}
+                Source: {esLevels?.day ? "ES (Massive)" : sessionLevelsFromCtx ? "engine" : "store"}
               </div>
             </div>
 
@@ -873,7 +879,7 @@ export default function Page() {
 
             const direction =
               entryDecision?.direction === "CALL" ||
-              entryDecision?.direction === "PUT"
+                entryDecision?.direction === "PUT"
                 ? entryDecision.direction
                 : "CALL";
 

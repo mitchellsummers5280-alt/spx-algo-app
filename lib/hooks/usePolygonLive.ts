@@ -4,8 +4,10 @@
 import { useEffect, useRef } from "react";
 import { useSpiceStore } from "@/lib/store/spiceStore";
 import { useCandleStore } from "@/lib/store/candleStore";
+import { useInstitutionalSessions } from "@/lib/hooks/useInstitutionalSessions";
 
-// ✅ use your session level engine (the one you pasted)
+
+// ✅ use your session level engine
 import { buildSessionLevels } from "@/lib/engines/sessionLevelEngine";
 
 type ApiCandle = {
@@ -54,37 +56,27 @@ function aggregateToTf(raw1m: Candle[], tfMs: number): Candle[] {
   return out;
 }
 
-function pushSessionLevelsToSpiceStore(oneMin: Candle[]) {
+function pushNyLevelsToSpiceStore(oneMin: Candle[]) {
   try {
     const prev = (useSpiceStore.getState() as any).sessionLevels;
     const levels = buildSessionLevels(oneMin as any, prev);
 
-    // Save the whole object if your store supports it
-    const st: any = useSpiceStore.getState();
-    if (typeof st.setSessionLevels === "function") {
-      st.setSessionLevels(levels);
-    }
-
-    // ✅ ALSO write the exact primitive keys your debug page reads
-    // (so Asia/London populate instantly)
+    // Keep the full object if you want, but DO NOT write Asia/London from SPX
     useSpiceStore.setState({
       sessionLevels: levels,
 
-      asiaHigh: levels.asia?.high ?? null,
-      asiaLow: levels.asia?.low ?? null,
-
-      londonHigh: levels.london?.high ?? null,
-      londonLow: levels.london?.low ?? null,
-
+      // ✅ ONLY NY from SPX
       nyHigh: levels.ny?.high ?? null,
       nyLow: levels.ny?.low ?? null,
     } as any);
   } catch (err) {
-    console.error("[SPICE] pushSessionLevelsToSpiceStore error:", err);
+    console.error("[SPICE] pushNyLevelsToSpiceStore error:", err);
   }
 }
 
 export function usePolygonLive() {
+  useInstitutionalSessions();
+
   const setPrice = useSpiceStore((s) => s.setPrice);
 
   const updateFromTick = useCandleStore((s) => s.updateFromTick);
@@ -96,11 +88,10 @@ export function usePolygonLive() {
   useEffect(() => {
     let cancelled = false;
 
+    // ✅ PRICE polling should hit your price route (NOT candles)
     const fetchPrice = async () => {
       try {
-        const res = await fetch("/api/polygon/candles?tf=1m&lookback=3d", {
-          cache: "no-store",
-        });
+        const res = await fetch("/api/spx/price", { cache: "no-store" });
         if (!res.ok) return;
 
         const data = await res.json();
@@ -108,16 +99,16 @@ export function usePolygonLive() {
           typeof data === "number"
             ? data
             : typeof data?.price === "number"
-              ? data.price
-              : typeof data?.last === "number"
-                ? data.last
-                : null;
+            ? data.price
+            : typeof data?.last === "number"
+            ? data.last
+            : null;
 
         if (cancelled || p == null) return;
 
-        // Always set price. Only update candles on change to reduce churn.
         setPrice(p);
 
+        // Only update candles on change to reduce churn
         if (lastPriceRef.current !== p) {
           lastPriceRef.current = p;
           updateFromTick(p, Date.now());
@@ -127,19 +118,20 @@ export function usePolygonLive() {
       }
     };
 
+    // ✅ Seed last 36h–48h of 1m so Asia/London exist immediately
     const seedCandlesOnce = async () => {
       if (seededRef.current) return;
 
       try {
-        // Your route already fetches ~10 days; good for “last 24h includes last session”
-        const res = await fetch("/api/polygon/candles", { cache: "no-store" });
+        const res = await fetch("/api/polygon/candles?tf=1m&lookback=48h", {
+          cache: "no-store",
+        });
         if (!res.ok) return;
 
         const data = (await res.json()) as { candles?: ApiCandle[] };
         if (cancelled) return;
 
         if (Array.isArray(data.candles) && data.candles.length > 0) {
-          // Normalize + sort
           const oneMin: Candle[] = data.candles
             .map((c) => ({
               t: c.t,
@@ -151,15 +143,14 @@ export function usePolygonLive() {
             }))
             .sort((a, b) => a.t - b.t);
 
-          // ✅ seed 1m
+          // ✅ seed 1m + 5m
           seedHistory("1m", oneMin);
 
-          // ✅ derive + seed 5m from 1m history
           const fiveMin = aggregateToTf(oneMin, 5 * 60_000);
           seedHistory("5m", fiveMin);
 
-          // ✅ NEW: compute + push session levels into spiceStore keys used by /spx/debug
-          pushSessionLevelsToSpiceStore(oneMin);
+          // ✅ compute + push session levels into spiceStore keys used by /spx/debug
+          pushNyLevelsToSpiceStore(oneMin);
 
           seededRef.current = true;
         }
@@ -169,11 +160,11 @@ export function usePolygonLive() {
     };
 
     // initial
-    fetchPrice();
     seedCandlesOnce();
+    fetchPrice();
 
     // live price polling
-    const priceId = setInterval(fetchPrice, 2000);
+    const priceId = setInterval(fetchPrice, 5000);
 
     return () => {
       cancelled = true;
