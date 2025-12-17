@@ -11,6 +11,62 @@ import { usePolygonLive } from "@/lib/hooks/usePolygonLive";
 import { useSessionLevelsStore } from "@/lib/store/sessionLevelsStore";
 import { useInstitutionalSessions } from "@/lib/hooks/useInstitutionalSessions";
 
+function getNYParts(ms: number) {
+  const dtf = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+
+  const parts = dtf.formatToParts(new Date(ms));
+  const get = (type: string) => parts.find((p) => p.type === type)?.value;
+
+  const yyyy = get("year")!;
+  const mm = get("month")!;
+  const dd = get("day")!;
+  const hh = Number(get("hour") ?? "0");
+  const mi = Number(get("minute") ?? "0");
+
+  return {
+    nyDay: `${yyyy}-${mm}-${dd}`,
+    minutes: hh * 60 + mi,
+  };
+}
+
+function computeSpxCashHodLod(oneMinCandles: { t: number; h: number; l: number }[]) {
+  if (!oneMinCandles?.length) return { hod: null as number | null, lod: null as number | null };
+
+  const nowNY = getNYParts(Date.now());
+  const START = 9 * 60 + 30; // 09:30
+  const END = 16 * 60;       // 16:00
+
+  let hod = -Infinity;
+  let lod = Infinity;
+  let found = 0;
+
+  for (const c of oneMinCandles) {
+    if (!c || typeof c.t !== "number") continue;
+    const p = getNYParts(c.t);
+
+    if (p.nyDay !== nowNY.nyDay) continue;
+    if (p.minutes < START || p.minutes > END) continue;
+
+    if (typeof c.h === "number") hod = Math.max(hod, c.h);
+    if (typeof c.l === "number") lod = Math.min(lod, c.l);
+    found++;
+  }
+
+  if (!found || !Number.isFinite(hod) || !Number.isFinite(lod)) {
+    return { hod: null, lod: null };
+  }
+
+  return { hod, lod };
+}
+
 function formatTime(ms: number) {
   const d = new Date(ms);
   return d.toLocaleTimeString("en-US", {
@@ -100,6 +156,7 @@ export default function Page() {
 
   // ✅ candles
   const oneMinCandles = useCandleStore((s) => s.candlesByTf["1m"]);
+  const { hod: spxHod, lod: spxLod } = computeSpxCashHodLod(oneMinCandles);
   const fiveMinCandles = useCandleStore((s) => s.candlesByTf["5m"]);
   const lastUpdated1m = useCandleStore((s) => s.lastUpdatedByTf["1m"]);
   const lastUpdated5m = useCandleStore((s) => s.lastUpdatedByTf["5m"]);
@@ -257,6 +314,23 @@ export default function Page() {
             {price ? price.toFixed(2) : "…"}
           </div>
 
+          {/* SPX Cash Session HOD / LOD */}
+          <div className="mt-3 flex items-center gap-3 text-xs">
+            <div className="rounded-full bg-zinc-900/60 px-3 py-1 text-zinc-300">
+              <span className="text-zinc-500">HOD</span>{" "}
+              <span className="font-medium text-zinc-100">
+                {spxHod != null ? spxHod.toFixed(2) : "—"}
+              </span>
+            </div>
+
+            <div className="rounded-full bg-zinc-900/60 px-3 py-1 text-zinc-300">
+              <span className="text-zinc-500">LOD</span>{" "}
+              <span className="font-medium text-zinc-100">
+                {spxLod != null ? spxLod.toFixed(2) : "—"}
+              </span>
+            </div>
+          </div>
+
           {latestCandle && (
             <div className="mt-2 text-xs text-zinc-500">
               Last 1m: O {latestCandle.o.toFixed(2)} · H{" "}
@@ -265,6 +339,7 @@ export default function Page() {
             </div>
           )}
         </div>
+
 
         {/* Multi-timeframe EMAs (Primary TF 5m) */}
         <div className="rounded-2xl border border-zinc-800 bg-zinc-950/70 p-4">
